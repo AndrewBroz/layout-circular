@@ -31,3 +31,12 @@ before the move are recorded in its `docs/DECISIONS.md`.
   two of them. Prose that described mermaid as the only renderer now
   speaks of renderers in general. With default options, the output
   is identical to mermaid-layout-circular 0.9.3.
+- **2026-11-25 — Labels are placed here.** Each routed edge now
+  carries `label`, the center of its label, when the input gave the
+  edge a `labelWidth`. The placement moved from mermaid-layout-circular's
+  render seam, unchanged: the path's middle sample, and for a rim
+  label that crowds the boxes beside it, a radial slide outward until
+  it clears. It is pure geometry and the Pele layout needs the same
+  thing, so it belongs with the math. Group boxes stay in each
+  renderer, because their padding and title room depend on how the
+  renderer draws a group.

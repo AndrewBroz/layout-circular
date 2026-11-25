@@ -67,6 +67,8 @@ export interface RoutedEdge {
   points: Point[];
   /** True when the edge rides the rim between circle neighbors. */
   onRim: boolean;
+  /** Center of the edge's label, when the input gave it a width. */
+  label?: Point;
 }
 
 export interface CircularLayoutOptions {
@@ -127,6 +129,10 @@ export interface CircularLayoutResult {
 }
 
 const TAU = 2 * Math.PI;
+
+/** A label's height when the caller didn't measure it: one line of
+ *  16px text, the common default. */
+const LABEL_LINE = 20;
 
 const defaults = {
   spacing: 40,
@@ -863,9 +869,56 @@ export const circularLayout = (
       { ...ringOptions, startAngle: Math.PI - ringOptions.startAngle },
       undefined
     );
-    return mirrored(solved);
+    return withLabels(mirrored(solved), nodes, edges);
   }
-  return layoutRing(nodes, edges, ringOptions, undefined);
+  return withLabels(layoutRing(nodes, edges, ringOptions, undefined), nodes, edges);
+};
+
+/**
+ * Seat each label on its path's middle sample. A rim label wider than
+ * its gap would sit on the neighboring boxes, so it is measured
+ * against every node box, and while it collides it slides radially
+ * outward: outside the ring there is always room. Two tiers: a label
+ * that fits inline with modest breathing room stays inline, since a
+ * home inside the gap beats an airier one outside the ring. Only when
+ * even the modest fit fails does it slide, and then it clears
+ * generously. A chord's label lives in the middle, which the swerve
+ * already keeps clear.
+ */
+const withLabels = (
+  result: CircularLayoutResult,
+  nodes: LayoutNodeInput[],
+  edges: LayoutEdgeInput[]
+): CircularLayoutResult => {
+  const size = new Map(nodes.map((n) => [n.id, n]));
+  const placed = result.nodes.map((p) => ({ x: p.x, y: p.y, n: size.get(p.id)! }));
+  const labelOf = new Map(edges.map((e) => [e.id, e]));
+  for (const edge of result.edges) {
+    const input = labelOf.get(edge.id);
+    const w = input?.labelWidth ?? 0;
+    if (w <= 0 || edge.points.length === 0) {
+      continue;
+    }
+    const h = input?.labelHeight ?? LABEL_LINE;
+    const mid = edge.points[Math.floor(edge.points.length / 2)]!;
+    let at = mid;
+    const r = Math.hypot(mid.x, mid.y);
+    const collides = (p: Point, breath: number): boolean =>
+      placed.some(
+        (q) =>
+          Math.abs(p.x - q.x) < (w + breath + q.n.width) / 2 &&
+          Math.abs(p.y - q.y) < (h + breath + q.n.height) / 2
+      );
+    if (edge.onRim && r > 0 && collides(at, 14)) {
+      // A wide label needs a longer slide before it can clear.
+      const maxPush = 64 + w + h;
+      for (let push = 8; collides(at, 32) && push <= maxPush; push += 8) {
+        at = { x: (mid.x * (r + push)) / r, y: (mid.y * (r + push)) / r };
+      }
+    }
+    edge.label = at;
+  }
+  return result;
 };
 
 /**
@@ -1229,9 +1282,7 @@ const layoutRing = (
     const prev = pairLabel.get(key) ?? { w: 0, h: 0 };
     pairLabel.set(key, {
       w: Math.max(prev.w, e.labelWidth),
-      // Without a measured height, assume one line of 16px label
-      // text, the common default.
-      h: Math.max(prev.h, e.labelHeight ?? 20),
+      h: Math.max(prev.h, e.labelHeight ?? LABEL_LINE),
     });
   }
   const radialLabelNeed = (a: string, b: string, angle: number): number => {

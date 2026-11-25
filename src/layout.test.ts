@@ -1257,6 +1257,43 @@ describe('edge routing', () => {
     }
   });
 
+  it('seats a label on its path and leaves unlabeled edges without one', () => {
+    const ids = ['A', 'B', 'C', 'D'];
+    const { edges } = circularLayout(ids.map((id) => box(id)), [
+      { ...edge('A', 'B'), labelWidth: 30, labelHeight: 18 },
+      ...cycle(...ids).slice(1),
+    ]);
+    const labeled = edges.find((e) => e.id === 'A-B')!;
+    expect(labeled.label).toEqual(labeled.points[Math.floor(labeled.points.length / 2)]);
+    for (const e of edges.filter((x) => x.id !== 'A-B')) {
+      expect(e.label, e.id).toBeUndefined();
+    }
+  });
+
+  it('slides a rim label that crowds its neighbors outward until it clears every box', () => {
+    // The rim widens a gap for a label's width, so a tall label is the
+    // one that still crowds the boxes beside it.
+    const ids = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const w = 40;
+    const h = 120;
+    const wide = (id: string) => box(id, 120, 50);
+    const { edges, nodes } = circularLayout(ids.map(wide), [
+      { ...edge('A', 'B'), labelWidth: w, labelHeight: h },
+      ...cycle(...ids).slice(1),
+    ], { spacing: 10 });
+    const labeled = edges.find((e) => e.id === 'A-B')!;
+    const mid = labeled.points[Math.floor(labeled.points.length / 2)]!;
+    const at = labeled.label!;
+    expect(Math.hypot(at.x, at.y)).toBeGreaterThan(Math.hypot(mid.x, mid.y));
+    const sizes = new Map(ids.map((id) => [id, wide(id)]));
+    for (const n of nodes) {
+      const s = sizes.get(n.id)!;
+      const overlaps =
+        Math.abs(at.x - n.x) < (w + s.width) / 2 && Math.abs(at.y - n.y) < (h + s.height) / 2;
+      expect(overlaps, `label clear of ${n.id}`).toBe(false);
+    }
+  });
+
   it('never wanders inside a node box on its way', () => {
     const wide = ['A', 'B', 'C', 'D', 'E'].map((id) => box(id, 180, 60));
     const { edges, nodes } = circularLayout(wide, [
