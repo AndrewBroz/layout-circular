@@ -1769,6 +1769,28 @@ describe('straight labels on parallel edges', () => {
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     return (r.w * Math.abs(b.y - a.y) + r.h * Math.abs(b.x - a.x)) / (2 * len);
   };
+  const pairOf = (e: { start: string; end: string }) => [e.start, e.end].sort().join(' ');
+  /** Whether segment a–b passes through the rectangle's interior
+   *  (Liang–Barsky clipping). */
+  const crosses = (r: Rect, a: P, b: P): boolean => {
+    const [dx, dy] = [b.x - a.x, b.y - a.y];
+    let [t0, t1] = [0, 1];
+    for (const [pk, qk] of [
+      [-dx, a.x - (r.x - r.w / 2)],
+      [dx, r.x + r.w / 2 - a.x],
+      [-dy, a.y - (r.y - r.h / 2)],
+      [dy, r.y + r.h / 2 - a.y],
+    ] as const) {
+      if (pk === 0) {
+        if (qk <= 0) return false;
+        continue;
+      }
+      const t = qk / pk;
+      if (pk < 0) t0 = Math.max(t0, t);
+      else t1 = Math.min(t1, t);
+    }
+    return t1 - t0 > 1e-9;
+  };
   const labeled = (start: string, end: string, w: number, h: number): LayoutEdgeInput => ({
     ...edge(start, end),
     labelWidth: w,
@@ -1795,6 +1817,17 @@ describe('straight labels on parallel edges', () => {
       }
       for (const { e: f, r: s } of rects.slice(i + 1)) {
         expect(overlap(r, s), `${e.id} label clear of ${f.id} label`).toBe(false);
+      }
+      // A side label crosses no line of its group, its own included.
+      // The middle label of an odd fan stays on its line by design.
+      const [p, q] = [e.start, e.end].sort().map((id) => result.nodes.find((n) => n.id === id)!);
+      if (Math.abs(sideOf(e.points[Math.floor(e.points.length / 2)]!, p!, q!)) < 0.5) {
+        continue;
+      }
+      for (const f of result.edges.filter((x) => pairOf(x) === pairOf(e))) {
+        expect(crosses(r, f.points[0]!, f.points.at(-1)!), `${e.id} label off ${f.id} line`).toBe(
+          false
+        );
       }
     }
     return { result, rects };
@@ -1842,6 +1875,62 @@ describe('straight labels on parallel edges', () => {
       ['A-C', 'C-A'],
       { ...straight, direction: 'counterclockwise', parallelGap: 8 }
     );
+  });
+
+  /** A wheel of `n` rim nodes around hub H, with a labeled opposite
+   *  pair on the A–B rim edge. */
+  const wheel = (n: number, w: number, h: number): [LayoutNodeInput[], LayoutEdgeInput[]] => {
+    const ring = ['A', 'B', 'C', 'D', 'E', 'F'].slice(0, n);
+    return [
+      [...ring, 'H'].map((id) => box(id)),
+      [
+        labeled('A', 'B', w, h),
+        labeled('B', 'A', w, h),
+        ...cycle(...ring).slice(1),
+        ...ring.map((id) => edge(id, 'H')),
+      ],
+    ];
+  };
+  const tight = { ...straight, spacing: 20 };
+
+  it('keeps a rim pair beside a hub off the hub and every box', () => {
+    for (const [n, w, h] of [
+      [5, 40, 18],
+      [6, 50, 40],
+    ] as const) {
+      const [nodes, edges] = wheel(n, w, h);
+      const { result } = check(nodes, edges, ['A-B', 'B-A'], tight);
+      expect(result.hub, `${n}-ring hub`).toBe('H');
+    }
+  });
+
+  it('never slides an inner label past the center of a small ring', () => {
+    // A four-ring with a hub and big labels: the inner label steps
+    // onto the hub and finds no clear seat before the center. It
+    // settles back at its stepped seat, beside its own line, rather
+    // than crossing to the far side of the ring.
+    const [nodes, edges] = wheel(4, 60, 30);
+    const result = circularLayout(nodes, edges, tight);
+    expect(result.hub).toBe('H');
+    const a = result.nodes.find((x) => x.id === 'A')!;
+    const b = result.nodes.find((x) => x.id === 'B')!;
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const rects = ['A-B', 'B-A'].map((id) => {
+      const e = result.edges.find((x) => x.id === id)!;
+      return { e, r: { ...e.label!, w: 60, h: 30 } };
+    });
+    expect(overlap(rects[0]!.r, rects[1]!.r), 'labels apart').toBe(false);
+    for (const { e, r } of rects) {
+      expect(r.x * mid.x + r.y * mid.y, `${e.id} short of center`).toBeGreaterThan(0);
+      for (const f of result.edges.filter((x) => pairOf(x) === 'A B')) {
+        expect(crosses(r, f.points[0]!, f.points.at(-1)!), `${e.id} off ${f.id}`).toBe(false);
+      }
+      for (const n of result.nodes.filter((x) => x.id !== 'H')) {
+        expect(overlap(r, { x: n.x, y: n.y, w: 80, h: 40 }), `${e.id} clear of ${n.id}`).toBe(
+          false
+        );
+      }
+    }
   });
 
   it('still seats a lone straight label at its midpoint', () => {

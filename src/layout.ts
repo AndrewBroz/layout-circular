@@ -937,7 +937,10 @@ export const circularLayout = (
  *  rather than touching it. */
 const PARALLEL_LABEL_CLEARANCE = 4;
 
-/** True when every sample of a path lies on the line through its ends. */
+/** True when every sample of a path lies on the line through its ends.
+ *  The 1e-6px tolerance only absorbs float error: straight edges are
+ *  sampled exactly on their segment, while even the flattest bowed
+ *  spur sibling strays by whole pixels. */
 const isStraight = (points: Point[]): boolean => {
   const a = points[0]!;
   const b = points[points.length - 1]!;
@@ -986,11 +989,7 @@ const withLabels = (
     const r = Math.hypot(mid.x, mid.y);
     const collides = (p: Point, breath: number): boolean => collidesAny(placed, p, w, h, breath);
     if (edge.onRim && r > 0 && collides(at, 14)) {
-      // A wide label needs a longer slide before it can clear.
-      const maxPush = 64 + w + h;
-      for (let push = 8; collides(at, 32) && push <= maxPush; push += 8) {
-        at = { x: (mid.x * (r + push)) / r, y: (mid.y * (r + push)) / r };
-      }
+      at = slideClear(placed, w, h, outward(mid));
     }
     edge.label = at;
   }
@@ -1001,6 +1000,54 @@ const withLabels = (
 };
 
 type PlacedBox = { x: number; y: number; n: LayoutNodeInput };
+
+/** Where a label sits after sliding `push` px from `from` along the
+ *  unit vector `dir`. */
+type Seat = (push: number) => Point;
+
+/** A slide along `dir`. */
+const along =
+  (from: Point, dir: Point): Seat =>
+  (push) => ({ x: from.x + dir.x * push, y: from.y + dir.y * push });
+
+/** A slide radially outward from `from`, written as a scale of `from`
+ *  rather than through a unit vector: that is the arithmetic the arc
+ *  labels have always used, so their output stays byte-identical. */
+const outward = (from: Point): Seat => {
+  const r = Math.hypot(from.x, from.y);
+  return (push) => ({ x: (from.x * (r + push)) / r, y: (from.y * (r + push)) / r });
+};
+
+/**
+ * Slide a crowded label in 8px steps until it clears every box
+ * generously (32px of breath). A wide label needs a longer slide, so
+ * the default limit grows with its size. With `settle`, a slide that
+ * ends still crowding (14px) falls back to its first modestly clear
+ * seat on the way, or failing that to where it started: a bounded
+ * slide that ran out should not strand the label at its far end.
+ */
+const slideClear = (
+  placed: PlacedBox[],
+  w: number,
+  h: number,
+  seat: Seat,
+  limit = 64 + w + h,
+  settle = false
+): Point => {
+  const from = seat(0);
+  let at = from;
+  let modest: Point | undefined;
+  for (let push = 8; collidesAny(placed, at, w, h, 32) && push <= limit; push += 8) {
+    at = seat(push);
+    if (!modest && !collidesAny(placed, at, w, h, 14)) {
+      modest = at;
+    }
+  }
+  if (settle && collidesAny(placed, at, w, h, 14)) {
+    return modest ?? from;
+  }
+  return at;
+};
 
 const collidesAny = (
   placed: PlacedBox[],
@@ -1079,7 +1126,9 @@ const withParallelLabels = (
       mid,
       offset,
       reach: (w * Math.abs(normal.x) + h * Math.abs(normal.y)) / 2,
-      // Under a pixel from the center line counts as on it.
+      // Under half a pixel from the center line counts as on it: a
+      // fan's middle line has offset 0 up to float error, while the
+      // nearest real sibling sits half a scaled gap out, several px.
       side: Math.abs(offset) < 0.5 ? 0 : Math.sign(offset),
     };
   });
@@ -1095,10 +1144,7 @@ const withParallelLabels = (
     let at = mid;
     const collides = (p: Point, breath: number) => collidesAny(placed, p, w, h, breath);
     if (middle.edge.onRim && r > 0 && collides(at, 14)) {
-      const maxPush = 64 + w + h;
-      for (let push = 8; collides(at, 32) && push <= maxPush; push += 8) {
-        at = { x: (mid.x * (r + push)) / r, y: (mid.y * (r + push)) / r };
-      }
+      at = slideClear(placed, w, h, outward(mid));
     }
     middle.edge.label = at;
   }
@@ -1119,9 +1165,20 @@ const withParallelLabels = (
       let at = base;
       const collides = (p: Point, breath: number) => collidesAny(placed, p, seat.w, seat.h, breath);
       if (seat.edge.onRim && collides(at, 14)) {
-        const maxPush = 64 + seat.w + seat.h;
-        for (let push = 8; collides(at, 32) && push <= maxPush; push += 8) {
-          at = { x: base.x + normal.x * side * push, y: base.y + normal.y * side * push };
+        const dir = { x: normal.x * side, y: normal.y * side };
+        // How far this direction runs before it passes the center.
+        const toCenter = -(base.x * dir.x + base.y * dir.y);
+        if (toCenter > 0) {
+          // An inner label slides inward. Past the center it would
+          // land on the far side of the ring, nowhere near its edge,
+          // so the slide stops at the center. If nothing on the way
+          // is clear, it settles at the first modestly clear seat, or
+          // else back at its stepped seat beside its own line: an
+          // overlap there is local and legible, a stray label is not.
+          const limit = Math.min(64 + seat.w + seat.h, toCenter);
+          at = slideClear(placed, seat.w, seat.h, along(base, dir), limit, true);
+        } else {
+          at = slideClear(placed, seat.w, seat.h, along(base, dir));
         }
       }
       seat.edge.label = at;

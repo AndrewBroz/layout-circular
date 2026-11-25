@@ -87,3 +87,13 @@ before the move are recorded in its `docs/DECISIONS.md`.
   The middle label keeps the radial slide. Only truly straight paths
   group, so bowed spur siblings keep the old placement. A lone edge's
   label is unchanged, and the arcs are byte-identical.
+- **2026-11-25 — An inner label stops at the center.** Review found
+  that an inner label of a rim pair could slide inward past the
+  center, onto the far side of a small ring. Now the inward slide
+  stops at the center. If no seat on the way clears the boxes, the
+  label takes the first modestly clear seat, or else its stepped seat
+  beside its own line. An overlap there stays local and legible. A
+  label on the far side of the ring is not. On a four-ring with a hub
+  and big labels, the inner label may still touch the hub. The three
+  copies of the slide loop became one `slideClear` helper. The arc
+  labels keep their own scale arithmetic, so they stay byte-identical.
