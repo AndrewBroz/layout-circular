@@ -1,0 +1,52 @@
+{
+  "name": "layout-circular",
+  "version": "0.1.0",
+  "description": "Circular graph layout: nodes at equal angles on a circle, edges as arcs of it. Renderer-neutral, with no runtime dependencies.",
+  "type": "module",
+  "module": "dist/layout-circular.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/layout-circular.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "test": "vitest run",
+    "lint": "eslint . && tsc -p tsconfig.json"
+  },
+  "keywords": [
+    "layout",
+    "circular",
+    "cycle",
+    "graph",
+    "diagram"
+  ],
+  "author": "Andrew Broz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AndrewBroz/layout-circular.git"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.46.0",
+    "vite": "^7.0.0",
+    "vitest": "^4.0.0"
+  },
+  "sideEffects": false,
+  "homepage": "https://github.com/AndrewBroz/layout-circular#readme",
+  "bugs": {
+    "url": "https://github.com/AndrewBroz/layout-circular/issues"
+  }
+}
