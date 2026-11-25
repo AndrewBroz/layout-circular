@@ -82,7 +82,7 @@ renderer with smaller arrowheads can pass less.
 Known limits:
 
 - A chord across a ring with a hub runs straight through the hub, in
-  both modes, and its label sits on the hub.
+  both modes. Its label slides off the hub, across the line.
 - In a fan of three or more, the middle line's label stays on its
   line, so the label's background covers the lines beside it.
 

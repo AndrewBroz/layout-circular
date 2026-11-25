@@ -956,10 +956,10 @@ const isStraight = (points: Point[]): boolean => {
  * that fits inline with modest breathing room stays inline, since a
  * home inside the gap beats an airier one outside the ring. Only when
  * even the modest fit fails does it slide, and then it clears
- * generously. A chord's label sits at the chord's midpoint, even on a
- * hub there, a known limit. Parallel straight lines, such as an opposite chord
- * pair, get their own pass, `withParallelLabels`, since their middles
- * sit only a gap apart.
+ * generously. A chord's label sits at the chord's midpoint, and slides
+ * across the chord when it crowds a box, such as a hub. Parallel
+ * straight lines, such as an opposite chord pair, get their own pass,
+ * `withParallelLabels`, since their middles sit only a gap apart.
  */
 const withLabels = (
   result: CircularLayoutResult,
@@ -971,6 +971,7 @@ const withLabels = (
   const labelOf = new Map(edges.map((e) => [e.id, e]));
   const parallel = parallelGroups(result, labelOf);
   const grouped = new Set([...parallel.values()].flat());
+  const chord = chordTest(result);
   for (const edge of result.edges) {
     const input = labelOf.get(edge.id);
     const w = input?.labelWidth ?? 0;
@@ -984,16 +985,45 @@ const withLabels = (
     const collides = (p: Point, breath: number): boolean => collidesAny(placed, p, w, h, breath);
     if (edge.onRim && r > 0 && collides(at, 14)) {
       at = slideClear(placed, w, h, outward(mid));
+    } else if (chord(edge) && collides(at, 14)) {
+      // A chord's middle can sit on a hub, where a radial slide has
+      // no direction. It slides across its own line instead, to the
+      // side the sorted pair names, so two crossing diameters' labels
+      // part along their own normals.
+      at = slideClear(placed, w, h, along(mid, pairNormal(result, edge)), undefined, true);
     }
     edge.label = at;
   }
   for (const group of parallel.values()) {
-    withParallelLabels(group, result, placed, labelOf);
+    withParallelLabels(group, result, placed, labelOf, chord);
   }
   return result;
 };
 
 type PlacedBox = { x: number; y: number; n: LayoutNodeInput };
+
+/**
+ * Tells a chord from a spoke or a spur: a chord is off the rim, yet
+ * both its ends sit on one ring, the main ring or a satellite's.
+ */
+const chordTest = (result: CircularLayoutResult): ((edge: RoutedEdge) => boolean) => {
+  const rings = [result.order, ...(result.satellites ?? []).map((s) => s.members)].map(
+    (ids) => new Set(ids)
+  );
+  return (edge) =>
+    !edge.onRim &&
+    edge.start !== edge.end &&
+    rings.some((ring) => ring.has(edge.start) && ring.has(edge.end));
+};
+
+/** The unit normal of the line between an edge's two nodes, in the
+ *  frame of the sorted pair, so both directions share one side. */
+const pairNormal = (result: CircularLayoutResult, edge: RoutedEdge): Point => {
+  const [first, second] = [edge.start, edge.end].sort();
+  const from = result.nodes.find((n) => n.id === first)!;
+  const to = result.nodes.find((n) => n.id === second)!;
+  return unit({ x: to.y - from.y, y: -(to.x - from.x) });
+};
 
 /** Where a label sits after sliding `push` px from `from` along the
  *  unit vector `dir`. */
@@ -1089,14 +1119,15 @@ const parallelGroups = (
  * label nearer the center. The rectangle's reach across the line is
  * its width and height projected onto the perpendicular. A label on
  * the center line itself (the middle of an odd fan) stays put. A rim
- * label that still crowds a box then slides on, the same way it was
- * already heading, so it never crosses back over a sibling.
+ * or chord label that still crowds a box then slides on, the same way
+ * it was already heading, so it never crosses back over a sibling.
  */
 const withParallelLabels = (
   group: RoutedEdge[],
   result: CircularLayoutResult,
   placed: PlacedBox[],
-  labelOf: Map<string, LayoutEdgeInput>
+  labelOf: Map<string, LayoutEdgeInput>,
+  chord: (edge: RoutedEdge) => boolean
 ): void => {
   // The sorted pair, so both directions share one center-line frame.
   const [first, second] = [group[0]!.start, group[0]!.end].sort();
@@ -1158,7 +1189,8 @@ const withParallelLabels = (
       };
       let at = base;
       const collides = (p: Point, breath: number) => collidesAny(placed, p, seat.w, seat.h, breath);
-      if (seat.edge.onRim && collides(at, 14)) {
+      // A chord's label may sit on a hub; it slides on the same way.
+      if ((seat.edge.onRim || chord(seat.edge)) && collides(at, 14)) {
         const dir = { x: normal.x * side, y: normal.y * side };
         // How far this direction runs before it passes the center.
         const toCenter = -(base.x * dir.x + base.y * dir.y);

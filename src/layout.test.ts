@@ -1809,7 +1809,7 @@ describe('chords', () => {
     }
   });
 
-  it('runs a diameter straight through a hub — a known limit', () => {
+  it('runs a diameter straight through a hub, a known limit for the line', () => {
     const ring = ['A', 'B', 'C', 'D', 'E', 'F'];
     const { edges, hub } = circularLayout(
       [...ring, 'H'].map((id) => box(id)),
@@ -1821,6 +1821,47 @@ describe('chords', () => {
     const mid = e.points[Math.floor(e.points.length / 2)]!;
     expect(Math.hypot(mid.x, mid.y)).toBeLessThan(1e-6);
   });
+
+  for (const [mode, options] of modes) {
+    it(`slides diameter labels off the hub and apart, crossing or opposite, with ${mode}`, () => {
+      const ring = ['A', 'B', 'C', 'D', 'E', 'F'];
+      const nodes = [...ring, 'H'].map((id) => box(id));
+      const label = (start: string, end: string): LayoutEdgeInput => ({
+        ...edge(start, end),
+        labelWidth: 60,
+        labelHeight: 18,
+      });
+      type R = { x: number; y: number; w: number; h: number };
+      const overlap = (a: R, b: R) =>
+        Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
+      for (const chords of [
+        [label('A', 'D')],
+        [label('A', 'D'), label('B', 'E')],
+        [label('A', 'D'), label('D', 'A')],
+      ]) {
+        const result = circularLayout(
+          nodes,
+          [...cycle(...ring), ...ring.map((id) => edge(id, 'H')), ...chords],
+          { ...options, hub: 'H' }
+        );
+        expect(result.hub).toBe('H');
+        const rects = chords.map((c) => ({
+          id: c.id,
+          r: { ...result.edges.find((e) => e.id === c.id)!.label!, w: 60, h: 18 },
+        }));
+        for (const [i, { id, r }] of rects.entries()) {
+          for (const n of result.nodes) {
+            expect(overlap(r, { x: n.x, y: n.y, w: 80, h: 40 }), `${id} label on ${n.id}`).toBe(
+              false
+            );
+          }
+          for (const other of rects.slice(i + 1)) {
+            expect(overlap(r, other.r), `${id} label on ${other.id} label`).toBe(false);
+          }
+        }
+      }
+    });
+  }
 });
 
 describe('straight labels on parallel edges', () => {
