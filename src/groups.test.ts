@@ -4,6 +4,7 @@ import type {
   CircularLayoutOptions,
   CircularLayoutResult,
   GroupBand,
+  GroupBox,
   GroupShape,
   LayoutEdgeInput,
   LayoutGroupInput,
@@ -564,11 +565,18 @@ describe('box titles', () => {
     const g = boxOf(r, 'Delivery');
     expect(g.titleSide).toBe('bottom');
     // The title room moves with it: the box's bottom holds the title,
-    // its top only the side padding.
-    const members = c.nodes.filter((n) => n.group === 'Delivery').map((n) => rectOf(r, n));
+    // its top only the side padding. What the box holds is its members
+    // and the arc between them, which sags below them.
+    const inside = new Set(c.nodes.filter((n) => n.group === 'Delivery').map((n) => n.id));
+    const held = [
+      ...c.nodes.filter((n) => inside.has(n.id)).map((n) => rectOf(r, n)),
+      ...r.edges
+        .filter((e) => inside.has(e.start) && inside.has(e.end))
+        .flatMap((e) => e.points.map((p) => ({ minX: p.x, minY: p.y, maxX: p.x, maxY: p.y }))),
+    ];
     const b = groupBounds(g);
-    expect(Math.min(...members.map((m) => m.minY)) - b.minY).toBeCloseTo(tight.bottom, 6);
-    expect(b.maxY - Math.max(...members.map((m) => m.maxY))).toBeCloseTo(tight.top, 6);
+    expect(Math.min(...held.map((m) => m.minY)) - b.minY).toBeCloseTo(tight.bottom, 6);
+    expect(b.maxY - Math.max(...held.map((m) => m.maxY))).toBeCloseTo(tight.top, 6);
     expect(g.title.y).toBeCloseTo(b.maxY - tight.top / 2, 6);
     expectClear(r, c);
   });
@@ -711,6 +719,58 @@ describe('boxes', () => {
     expect(g.title.x).toBeCloseTo((b.minX + b.maxX) / 2, 6);
     expect(g.title.y).toBeCloseTo(b.minY + 15, 6);
   });
+
+  // mermaid 12 draws every node at least 120px wide. Two wide members
+  // side by side at the bottom of a small ring: the arc between them
+  // sags below both, and the box must hold it.
+  const wide = (id: string, group?: string): LayoutNodeInput => ({
+    id,
+    width: 152,
+    height: 48,
+    ...(group !== undefined && { group }),
+  });
+  const mermaidPad = { top: 38, right: 12, bottom: 12, left: 12 };
+  const arcCases: { name: string; nodes: LayoutNodeInput[]; edges: LayoutEdgeInput[]; groups: LayoutGroupInput[] }[] = [
+    {
+      name: 'five wide nodes, Build and Test in Make',
+      nodes: [wide('I'), wide('S'), wide('B', 'Make'), wide('T', 'Make'), wide('P')],
+      edges: cycle('I', 'S', 'B', 'T', 'P'),
+      groups: [{ id: 'Make', padding: mermaidPad }],
+    },
+    {
+      name: 'eight wide nodes, Build and Test in Make',
+      nodes: [
+        wide('I'), wide('S'), wide('D'), wide('B', 'Make'), wide('T', 'Make'), wide('P'), wide('M'), wide('R'),
+      ],
+      edges: cycle('I', 'S', 'D', 'B', 'T', 'P', 'M', 'R'),
+      groups: [{ id: 'Make', padding: mermaidPad }],
+    },
+    ...gallery,
+  ];
+
+  for (const c of arcCases) {
+    it(`holds the arcs between its members, padded: ${c.name}`, () => {
+      const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+      for (const g of r.groups!.filter((s): s is GroupBox => s.kind === 'box')) {
+        const pad = c.groups.find((q) => q.id === g.id)!.padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+        const b = boundsRect(g);
+        const top = g.titleSide === 'top' ? pad.top : pad.bottom;
+        const bottom = g.titleSide === 'top' ? pad.bottom : pad.top;
+        const inside = new Set(membersOf(c, g.id).map((n) => n.id));
+        const arcs = r.edges.filter((e) => e.onRim && inside.has(e.start) && inside.has(e.end));
+        expect(arcs.length, `${g.id} has member arcs`).toBeGreaterThan(0);
+        for (const e of arcs) {
+          for (const p of e.points) {
+            expect(p.x, `${e.id} left`).toBeGreaterThanOrEqual(b.minX + pad.left - 1e-6);
+            expect(p.x, `${e.id} right`).toBeLessThanOrEqual(b.maxX - pad.right + 1e-6);
+            expect(p.y, `${e.id} top`).toBeGreaterThanOrEqual(b.minY + top - 1e-6);
+            expect(p.y, `${e.id} bottom`).toBeLessThanOrEqual(b.maxY - bottom + 1e-6);
+          }
+        }
+      }
+      expectClear(r, c);
+    });
+  }
 
   it('keeps the boxes clear counter-clockwise too', () => {
     const c = gallery[0]!;

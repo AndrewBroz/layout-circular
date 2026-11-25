@@ -6,8 +6,8 @@
  * mirror symmetry, and no gap is ever widened for a group. Three
  * cheap moves make room instead:
  *
- * 1. Tight shapes. A box hugs its members with the renderer's own
- *    padding: side room, and title room on top.
+ * 1. Tight shapes. A box hugs its members, and the arcs between them,
+ *    with the renderer's own padding: side room, and title room on top.
  * 2. Turn the ring. Any node may take the top, or the half-step
  *    between two nodes may, which is still mirror-symmetric. A group
  *    then sits balanced about an axis, where an axis-aligned box fits
@@ -836,7 +836,8 @@ const crosses = (line: Point[], r: Bounds): boolean => {
 
 /**
  * Every group's shape, deepest first, so a parent wraps its children.
- * A box is its members and child boxes, padded. A band is the slice of
+ * A box is its members, the paths between them and its child boxes,
+ * padded. A band is the slice of
  * the annulus that holds its members, its child bands and their
  * titles, padded: its ends keep the side padding, its arcs the bottom.
  */
@@ -875,12 +876,19 @@ const placeShapes = (
     }
     const pad = tree.padding.get(g)!;
     if (!bands.has(g)) {
-      const inner = boundsOf(
-        [...own, ...kids.map(groupBounds)].flatMap((b) => [
+      // The box holds the paths between its members too: an arc
+      // between two members sags past both, a loop reaches out.
+      const inside = new Set(subtree.get(g)!.map((n) => n.id));
+      const paths = result.edges
+        .filter((e) => inside.has(e.start) && inside.has(e.end))
+        .flatMap((e) => e.points);
+      const inner = boundsOf([
+        ...[...own, ...kids.map(groupBounds)].flatMap((b) => [
           { x: b.minX, y: b.minY },
           { x: b.maxX, y: b.maxY },
-        ])
-      );
+        ]),
+        ...paths,
+      ]);
       const low = bottom.has(g);
       const box = {
         minX: inner.minX - pad.left,

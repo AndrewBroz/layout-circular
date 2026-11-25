@@ -200,3 +200,20 @@ before the move are recorded in its `docs/DECISIONS.md`.
   `docs/DOCS-STYLE.md`, and the other repos point here. The pictures
   are Pele SVGs on a white card, so they read on GitHub's dark theme
   and on npm.
+- **2026-11-25 — A box holds the arcs between its members.** A box
+  was fitted to its member nodes alone. The arc between two members
+  follows the ring, so it can curve out past both of them. In
+  mermaid's "Make" picture, Build and Test sit side by side at the
+  bottom of a small ring, and the arc from Build to Test dipped below
+  the box and came back. The owner judged that a defect: a group's
+  shape must hold what the group draws. Now a box also holds every
+  point of every path between two of its members, then takes its
+  padding as before. That covers the ring arcs, a satellite's arcs,
+  and a member's loop back to itself. Paths into the group from
+  outside still cross its wall, as they must. Bands already held their
+  arcs, since a band follows the ring. Clearance, turning and growth
+  work as before, on the larger box. Ungrouped layouts don't run this
+  code. A test checks every box in the prototype gallery, and two
+  rings of mermaid-sized nodes, for the arcs plus padding. The Pele
+  pictures in `docs/media` were drawn before this change; they show it
+  after Pele picks up a release with it.
