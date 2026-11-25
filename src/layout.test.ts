@@ -316,7 +316,8 @@ describe('spurs', () => {
     const last = spurEdge.points[spurEdge.points.length - 1]!;
     expect(onBoxBorder(first, byId.get('Sun')!), 'starts on Sun border').toBe(true);
     expect(onBoxBorder(last, byId.get('A')!), 'ends on A border').toBe(true);
-    // The terminal segments outreach mermaid's ~5px end window.
+    // The default 10px tail outreaches marker handling within ~5px of
+    // each end.
     expect(dist(first, spurEdge.points[1]!)).toBeGreaterThan(6);
     expect(dist(last, spurEdge.points[spurEdge.points.length - 2]!)).toBeGreaterThan(6);
   });
@@ -1221,7 +1222,7 @@ describe('edge routing', () => {
     }
   });
 
-  it('gives every path a straight terminal segment longer than mermaid marker meddling', () => {
+  it('gives every path a straight terminal segment longer than marker handling reaches', () => {
     const ids = ['A', 'B', 'C', 'D', 'E'];
     const { edges } = circularLayout(
       ids.map((id) => box(id)),
@@ -1232,11 +1233,27 @@ describe('edge routing', () => {
       const prev = e.points[e.points.length - 2]!;
       const first = e.points[0]!;
       const second = e.points[1]!;
-      // mermaid displaces points within ~5px of the ends; the
-      // terminal segments must outreach that window or the marker
-      // orients along a kink.
+      // Mermaid moves points within ~5px of the ends; the terminal
+      // segments must outreach that window or the marker orients
+      // along a kink.
       expect(dist(last, prev), `${e.id} end tail`).toBeGreaterThan(6);
       expect(dist(first, second), `${e.id} start tail`).toBeGreaterThan(6);
+    }
+  });
+
+  it('keeps a terminal segment as long as the tail option asks', () => {
+    const ids = ['A', 'B', 'C', 'D', 'E'];
+    const { edges } = circularLayout(
+      ids.map((id) => box(id)),
+      [...cycle(...ids), edge('A', 'C'), edge('A', 'A')],
+      // Both ends of a rim arc need their tail, so the gap is wider
+      // than two of them.
+      { tail: 24, spacing: 60 }
+    );
+    for (const e of edges) {
+      const n = e.points.length;
+      expect(dist(e.points[n - 1]!, e.points[n - 2]!), `${e.id} end tail`).toBeGreaterThanOrEqual(24);
+      expect(dist(e.points[0]!, e.points[1]!), `${e.id} start tail`).toBeGreaterThanOrEqual(24);
     }
   });
 

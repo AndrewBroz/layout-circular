@@ -12,12 +12,11 @@
  * A neighbor edge is a true arc of that same circle, so the eye reads
  * one ring, not n separate curves. Every path is sampled center to
  * center, then trimmed to the exact silhouette crossings — bisected
- * on the curve itself, shape-aware — with straight ≥10px terminal
- * segments outside mermaid's marker-meddling window, so each
- * arrowhead sits flush on the outline it points into, rotated along
- * the curve's own trajectory. Mermaid is told to skip its own
- * boundary trimming, which cuts toward interior samples and would
- * bury what the layout just seated.
+ * on the curve itself, shape-aware — with a straight terminal
+ * segment at each end (the `tail` option), so each arrowhead sits
+ * flush on the outline it points into, rotated along the curve's own
+ * trajectory. The paths are finished: a renderer should draw them as
+ * given, without trimming them to node boundaries again.
  */
 
 export interface LayoutNodeInput {
@@ -87,6 +86,14 @@ export interface CircularLayoutOptions {
   swerve?: number;
   /** Points sampled per edge path. */
   samples?: number;
+  /** Length of the straight segment each path keeps before its ends,
+   *  px. A renderer orients an arrowhead along the last segment, and
+   *  may move points near the end while fitting the marker; a long
+   *  enough straight run keeps the arrowhead on the curve's own
+   *  direction. A path keeps both tails only when the gap it crosses
+   *  is longer than two of them, so keep `spacing` above twice
+   *  `tail`. */
+  tail?: number;
   /** Which way the walk travels from the top node. Default
    *  'clockwise'; 'counterclockwise' mirrors the whole layout across
    *  the vertical axis, so every guarantee carries over unchanged. */
@@ -128,6 +135,9 @@ const defaults = {
   bow: 0.35,
   swerve: 0.2,
   samples: 24,
+  // Outreaches mermaid's marker handling, which moves points within
+  // about 5px of a path's end.
+  tail: 10,
   direction: 'clockwise' as const,
   hub: 'auto' as const,
 };
@@ -450,22 +460,17 @@ const borderCrossing = (insidePt: Point, outsidePt: Point, b: BoxAt): Point => {
   return hi;
 };
 
-/** How far a path end must stay clean: mermaid's marker machinery
- *  displaces points within ~5px of an end, so the terminal segment
- *  must outreach that window or the arrowhead rotates along a kink. */
-const TAIL = 10;
-
 /**
  * Trim a sampled curve to the true silhouettes: the path begins and
  * ends exactly on the rendered outline — the crossing bisected on the
  * curve itself, shape-aware — and the samples adjacent to each end
- * keep a straight ≥10px terminal segment laid along the curve, out of
- * reach of mermaid's end-of-path marker meddling. The curve is
+ * keep a straight terminal segment at least `tail` long, laid along
+ * the curve, out of reach of a renderer's marker handling. The curve is
  * sampled from center to center, so the crossing always exists and
  * the arrowhead's axis is the curve's own trajectory at the border.
  */
-const throughBorders = (points: Point[], from: BoxAt, to: BoxAt): Point[] => {
-  const interior = points.filter((p) => !insideNode(p, from, TAIL) && !insideNode(p, to, TAIL));
+const throughBorders = (points: Point[], from: BoxAt, to: BoxAt, tail: number): Point[] => {
+  const interior = points.filter((p) => !insideNode(p, from, tail) && !insideNode(p, to, tail));
   if (interior.length === 0) {
     // Silhouettes so close the whole curve is swallowed: fall back to
     // the middle sample so the path still has a direction.
@@ -532,10 +537,17 @@ const bezier = (controls: Point[], cap: number): Point[] => {
 /** A self-loop: a petal reaching outward from `pos`, which lies on
  *  the ray from the origin at `angle`. Its two control points sit
  *  0.45 rad (about 26°) either side of that ray. */
-const petal = (pos: Point, angle: number, box: BoxAt, reach: number, cap: number): Point[] => {
+const petal = (
+  pos: Point,
+  angle: number,
+  box: BoxAt,
+  reach: number,
+  cap: number,
+  tail: number
+): Point[] => {
   const tipRadius = Math.hypot(pos.x, pos.y) + reach;
   const controls = [pos, onCircle(tipRadius, angle - 0.45), onCircle(tipRadius, angle + 0.45), pos];
-  return throughBorders(bezier(controls, cap), box, box);
+  return throughBorders(bezier(controls, cap), box, box, tail);
 };
 
 /** What the node claims of the circle at its seat: its extent along
@@ -837,7 +849,7 @@ export const circularLayout = (
   options: CircularLayoutOptions = {}
 ): CircularLayoutResult => {
   // An option that is present but undefined must not clobber its
-  // default — mermaid's config often supplies exactly that shape.
+  // default; a renderer's config often supplies exactly that shape.
   const given = Object.fromEntries(
     Object.entries(options).filter(([, value]) => value !== undefined)
   ) as CircularLayoutOptions;
@@ -875,7 +887,7 @@ const layoutRing = (
    *  through unchanged. */
   reversed = false
 ): CircularLayoutResult => {
-  const { spacing, startAngle, ordering, bow, swerve, samples, hub } = opts;
+  const { spacing, startAngle, ordering, bow, swerve, samples, tail, hub } = opts;
   // The gap between a node and what hangs off it radially: 80% of
   // the rim spacing.
   const spurGap = spacing * 0.8;
@@ -895,7 +907,7 @@ const layoutRing = (
         }
         // A self-loop on a lone node: a petal reaching upward, the
         // same gesture as on a ring.
-        return { ...e, points: petal(home, -Math.PI / 2, home, reach, samples), onRim: false };
+        return { ...e, points: petal(home, -Math.PI / 2, home, reach, samples, tail), onRim: false };
       }),
       order: [only.id],
       radius: 0,
@@ -1217,8 +1229,8 @@ const layoutRing = (
     const prev = pairLabel.get(key) ?? { w: 0, h: 0 };
     pairLabel.set(key, {
       w: Math.max(prev.w, e.labelWidth),
-      // Without a measured height, assume one line of mermaid's
-      // default 16px label text.
+      // Without a measured height, assume one line of 16px label
+      // text, the common default.
       h: Math.max(prev.h, e.labelHeight ?? 20),
     });
   }
@@ -1490,7 +1502,7 @@ const layoutRing = (
       const homeAngle = Math.atan2(pStart.y, pStart.x);
       return {
         ...e,
-        points: petal(pStart, homeAngle, boxAt(e.start), reach, samples),
+        points: petal(pStart, homeAngle, boxAt(e.start), reach, samples, tail),
         onRim: false,
       };
     }
@@ -1523,7 +1535,8 @@ const layoutRing = (
         points: throughBorders(
           bezier([pStart, control, pEnd], samples),
           boxAt(e.start),
-          boxAt(e.end)
+          boxAt(e.end),
+          tail
         ),
         onRim: false,
       };
@@ -1565,7 +1578,7 @@ const layoutRing = (
       for (let i = 0; i <= count; i++) {
         arc.push(onCircle(arcRadius, a + (delta * i) / count));
       }
-      return { ...e, points: throughBorders(arc, boxA, boxB), onRim: true };
+      return { ...e, points: throughBorders(arc, boxA, boxB, tail), onRim: true };
     }
 
     // A chord: bowed toward the center, swerved left of travel by how
@@ -1591,7 +1604,8 @@ const layoutRing = (
       points: throughBorders(
         bezier([pa, control, pb], samples),
         boxAt(e.start),
-        boxAt(e.end)
+        boxAt(e.end),
+        tail
       ),
       onRim: false,
     };
