@@ -73,3 +73,27 @@ before the move are recorded in its `docs/DECISIONS.md`.
   suits mermaid. Pele passes 8. An explicit `edges: undefined` means
   arcs everywhere, including the two-node pair key. Exact snapshots of
   four arc layouts now guard the default output in the tests.
+- **2026-11-25 — Labels of parallel straight lines step aside.** Both
+  labels of a straight opposite pair sat at their lines' middles,
+  only `parallelGap` apart, and overprinted. "next" and "prev" read
+  as "n prev" in Pele. Now each label of a parallel group leaves its
+  line perpendicular to it, away from the group's center line. The
+  distance is the label's width and height projected onto that
+  perpendicular, plus 4px of clearance. Labels further out stack on
+  the ones nearer the center, so no two overlap and none crosses a
+  sibling line. The middle label of an odd fan stays on its line. A
+  rim label that still crowds a box slides on in the direction it
+  stepped, not radially, so it never crosses back over its sibling.
+  The middle label keeps the radial slide. Only truly straight paths
+  group, so bowed spur siblings keep the old placement. A lone edge's
+  label is unchanged, and the arcs are byte-identical.
+- **2026-11-25 — An inner label stops at the center.** Review found
+  that an inner label of a rim pair could slide inward past the
+  center, onto the far side of a small ring. Now the inward slide
+  stops at the center. If no seat on the way clears the boxes, the
+  label takes the first modestly clear seat, or else its stepped seat
+  beside its own line. An overlap there stays local and legible. A
+  label on the far side of the ring is not. On a four-ring with a hub
+  and big labels, the inner label may still touch the hub. The three
+  copies of the slide loop became one `slideClear` helper. The arc
+  labels keep their own scale arithmetic, so they stay byte-identical.

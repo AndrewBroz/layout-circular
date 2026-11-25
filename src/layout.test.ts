@@ -1748,6 +1748,218 @@ describe('straight edges', () => {
   });
 });
 
+describe('straight labels on parallel edges', () => {
+  const straight = { edges: 'straight' as const };
+  type P = { x: number; y: number };
+  interface Rect {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }
+  const overlap = (a: Rect, b: Rect): boolean =>
+    Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
+  /** Signed distance of p from the line through a and b. */
+  const sideOf = (p: P, a: P, b: P): number => {
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    return ((p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x)) / len;
+  };
+  /** The rectangle's half extent across a line running a to b. */
+  const halfAcross = (r: Rect, a: P, b: P): number => {
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    return (r.w * Math.abs(b.y - a.y) + r.h * Math.abs(b.x - a.x)) / (2 * len);
+  };
+  const pairOf = (e: { start: string; end: string }) => [e.start, e.end].sort().join(' ');
+  /** Whether segment a–b passes through the rectangle's interior
+   *  (Liang–Barsky clipping). */
+  const crosses = (r: Rect, a: P, b: P): boolean => {
+    const [dx, dy] = [b.x - a.x, b.y - a.y];
+    let [t0, t1] = [0, 1];
+    for (const [pk, qk] of [
+      [-dx, a.x - (r.x - r.w / 2)],
+      [dx, r.x + r.w / 2 - a.x],
+      [-dy, a.y - (r.y - r.h / 2)],
+      [dy, r.y + r.h / 2 - a.y],
+    ] as const) {
+      if (pk === 0) {
+        if (qk <= 0) return false;
+        continue;
+      }
+      const t = qk / pk;
+      if (pk < 0) t0 = Math.max(t0, t);
+      else t1 = Math.min(t1, t);
+    }
+    return t1 - t0 > 1e-9;
+  };
+  const labeled = (start: string, end: string, w: number, h: number): LayoutEdgeInput => ({
+    ...edge(start, end),
+    labelWidth: w,
+    labelHeight: h,
+  });
+
+  const check = (
+    nodes: LayoutNodeInput[],
+    edges: LayoutEdgeInput[],
+    group: string[],
+    options: Parameters<typeof circularLayout>[2] = straight
+  ) => {
+    const result = circularLayout(nodes, edges, options);
+    const size = new Map(nodes.map((n) => [n.id, n]));
+    const rects = group.map((id) => {
+      const input = edges.find((e) => e.id === id)!;
+      const e = result.edges.find((x) => x.id === id)!;
+      return { e, r: { ...e.label!, w: input.labelWidth!, h: input.labelHeight! } };
+    });
+    for (const [i, { e, r }] of rects.entries()) {
+      for (const n of result.nodes) {
+        const box = { x: n.x, y: n.y, w: size.get(n.id)!.width, h: size.get(n.id)!.height };
+        expect(overlap(r, box), `${e.id} label clear of ${n.id}`).toBe(false);
+      }
+      for (const { e: f, r: s } of rects.slice(i + 1)) {
+        expect(overlap(r, s), `${e.id} label clear of ${f.id} label`).toBe(false);
+      }
+      // A side label crosses no line of its group, its own included.
+      // The middle label of an odd fan stays on its line by design.
+      const [p, q] = [e.start, e.end].sort().map((id) => result.nodes.find((n) => n.id === id)!);
+      if (Math.abs(sideOf(e.points[Math.floor(e.points.length / 2)]!, p!, q!)) < 0.5) {
+        continue;
+      }
+      for (const f of result.edges.filter((x) => pairOf(x) === pairOf(e))) {
+        expect(crosses(r, f.points[0]!, f.points.at(-1)!), `${e.id} label off ${f.id} line`).toBe(
+          false
+        );
+      }
+    }
+    return { result, rects };
+  };
+
+  it('seats each label of a labeled opposite pair beside its own line, apart', () => {
+    const ring = ['A', 'B', 'C', 'D', 'E'];
+    for (const [nodes, edges] of [
+      [
+        ring.map((id) => box(id)),
+        [labeled('A', 'B', 40, 18), labeled('B', 'A', 40, 18), ...cycle(...ring).slice(1)],
+      ],
+      [[box('A'), box('B')], [labeled('A', 'B', 46, 18), labeled('B', 'A', 46, 18)]],
+    ] as [LayoutNodeInput[], LayoutEdgeInput[]][]) {
+      const { rects } = check(nodes, edges, ['A-B', 'B-A']);
+      for (const { e, r } of rects) {
+        // Measured from its own line, the label sits wholly to one
+        // side, the far side from its sibling.
+        const a = e.points[0]!;
+        const b = e.points.at(-1)!;
+        const sibling = rects.find((x) => x.e !== e)!.e.points;
+        const siblingSide = Math.sign(sideOf(sibling[0]!, a, b));
+        const own = sideOf(r, a, b);
+        expect(Math.sign(own), `${e.id} on the far side`).toBe(-siblingSide);
+        expect(Math.abs(own), `${e.id} off its own line`).toBeGreaterThan(halfAcross(r, a, b));
+      }
+    }
+  });
+
+  it('keeps the labels of a fan of three apart and off the boxes', () => {
+    const three = [1, 2, 3].map((k) => ({ ...labeled('A', 'B', 36, 18), id: `AB${k}` }));
+    check(
+      ['A', 'B', 'C', 'D'].map((id) => box(id)),
+      [...three, ...cycle('A', 'B', 'C', 'D').slice(1)],
+      three.map((e) => e.id)
+    );
+    check([box('A'), box('B')], three, three.map((e) => e.id));
+  });
+
+  it('keeps an opposite pair apart under counterclockwise and a tight gap', () => {
+    const ring = ['A', 'B', 'C', 'D', 'E'];
+    check(
+      ring.map((id) => box(id)),
+      [labeled('A', 'C', 50, 18), labeled('C', 'A', 30, 30), ...cycle(...ring)],
+      ['A-C', 'C-A'],
+      { ...straight, direction: 'counterclockwise', parallelGap: 8 }
+    );
+  });
+
+  /** A wheel of `n` rim nodes around hub H, with a labeled opposite
+   *  pair on the A–B rim edge. */
+  const wheel = (n: number, w: number, h: number): [LayoutNodeInput[], LayoutEdgeInput[]] => {
+    const ring = ['A', 'B', 'C', 'D', 'E', 'F'].slice(0, n);
+    return [
+      [...ring, 'H'].map((id) => box(id)),
+      [
+        labeled('A', 'B', w, h),
+        labeled('B', 'A', w, h),
+        ...cycle(...ring).slice(1),
+        ...ring.map((id) => edge(id, 'H')),
+      ],
+    ];
+  };
+  const tight = { ...straight, spacing: 20 };
+
+  it('keeps a rim pair beside a hub off the hub and every box', () => {
+    for (const [n, w, h] of [
+      [5, 40, 18],
+      [6, 50, 40],
+    ] as const) {
+      const [nodes, edges] = wheel(n, w, h);
+      const { result } = check(nodes, edges, ['A-B', 'B-A'], tight);
+      expect(result.hub, `${n}-ring hub`).toBe('H');
+    }
+  });
+
+  it('never slides an inner label past the center of a small ring', () => {
+    // A four-ring with a hub and big labels: the inner label steps
+    // onto the hub and finds no clear seat before the center. It
+    // settles back at its stepped seat, beside its own line, rather
+    // than crossing to the far side of the ring.
+    const [nodes, edges] = wheel(4, 60, 30);
+    const result = circularLayout(nodes, edges, tight);
+    expect(result.hub).toBe('H');
+    const a = result.nodes.find((x) => x.id === 'A')!;
+    const b = result.nodes.find((x) => x.id === 'B')!;
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const rects = ['A-B', 'B-A'].map((id) => {
+      const e = result.edges.find((x) => x.id === id)!;
+      return { e, r: { ...e.label!, w: 60, h: 30 } };
+    });
+    expect(overlap(rects[0]!.r, rects[1]!.r), 'labels apart').toBe(false);
+    for (const { e, r } of rects) {
+      expect(r.x * mid.x + r.y * mid.y, `${e.id} short of center`).toBeGreaterThan(0);
+      for (const f of result.edges.filter((x) => pairOf(x) === 'A B')) {
+        expect(crosses(r, f.points[0]!, f.points.at(-1)!), `${e.id} off ${f.id}`).toBe(false);
+      }
+      for (const n of result.nodes.filter((x) => x.id !== 'H')) {
+        expect(overlap(r, { x: n.x, y: n.y, w: 80, h: 40 }), `${e.id} clear of ${n.id}`).toBe(
+          false
+        );
+      }
+    }
+  });
+
+  it('still seats a lone straight label at its midpoint', () => {
+    const ring = ['A', 'B', 'C', 'D', 'E'];
+    const { edges } = circularLayout(
+      ring.map((id) => box(id)),
+      [...cycle(...ring), labeled('A', 'C', 30, 18)],
+      straight
+    );
+    const e = edges.find((x) => x.id === 'A-C')!;
+    const a = e.points[0]!;
+    const b = e.points.at(-1)!;
+    expect(e.label!.x).toBeCloseTo((a.x + b.x) / 2, 9);
+    expect(e.label!.y).toBeCloseTo((a.y + b.y) / 2, 9);
+  });
+
+  it('leaves the arcs of a labeled opposite pair where they were', () => {
+    const ring = ['A', 'B', 'C', 'D', 'E'];
+    const { edges } = circularLayout(
+      ring.map((id) => box(id)),
+      [labeled('A', 'C', 30, 18), labeled('C', 'A', 30, 18), ...cycle(...ring)]
+    );
+    for (const id of ['A-C', 'C-A']) {
+      const e = edges.find((x) => x.id === id)!;
+      expect(e.label, id).toEqual(e.points[Math.floor(e.points.length / 2)]);
+    }
+  });
+});
+
 describe('arc output guard', () => {
   // Exact snapshots of a few default layouts, every float in full.
   // They were written when the arcs matched 0.1.1 byte for byte, so
