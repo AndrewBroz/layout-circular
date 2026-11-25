@@ -119,3 +119,72 @@ before the move are recorded in its `docs/DECISIONS.md`.
   confirmed. In straight mode only a chord label that crowded a box
   moves. Removing two options is a breaking change, so the next
   release is 0.2.0.
+- **2026-11-25 — Group shapes are placed here, the book designer's
+  way.** This supersedes the last sentence of "Labels are placed
+  here": group boxes no longer stay in each renderer. Each renderer
+  drew a box as the padded union of where its members landed, and
+  nothing kept it off other nodes or boxes. In Pele the water cycle's
+  two boxes met, and a ring neighbor sat on a title. Padding is now an
+  input, so the reason for keeping boxes in the renderers is gone.
+  `circularLayout` takes a fourth argument, the groups: padding per
+  side, the title's measured size, and the parent. It returns a shape
+  per group and `groupsClear`.
+  The owner chose the strategy, D2, from a prototype gallery of eight
+  cases rendered through real Pele. The rejected ones moved nodes:
+  - C widened the rim gap nearest each clash. It cleared every case,
+    but lost mirror symmetry in all eight (up to 396px off) and even
+    gaps in all eight (up to 898px widened). Nested groups squeezed
+    into one quadrant.
+  - A grew the radius up to 1.5 times, then widened like C. It grew
+    1.14 to 2.43 times and still widened six cases.
+  - B widened each gap with its mirror. It kept symmetry, but grew up
+    to 7.55 times and left clashes in two cases.
+  D2 moves the frame, not the pieces. It cleared all eight with even
+  gaps, mirror symmetry and growth of 1.09 times at most. The ring
+  keeps one radius and its equalized gaps. Boxes hug their members
+  with the renderer's padding. The ring may turn: any node, or the
+  half-step between two, takes the top, and each turn grows the radius
+  uniformly until clear. Turns rank rotation first. Among the turns
+  that clear within 1.15 times the unfitted radius, the least turned
+  wins, then the least grown. Otherwise the least grown turn that
+  clears within 1.5 times wins, then the least turned; otherwise the
+  shallowest clash. The prototype's flat 0.12 per turn made a
+  half-turn cost no more than one seat, so in real Pele the water
+  cycle turned half-way round to save 7% growth; review asked for
+  the least turn instead. The owner accepted that the first node can
+  leave the top when a turn is needed. A group
+  whose first and last seats span half the ring's steps or more is a
+  band, an annular sector, and so is everything nested in it. Case 4
+  of the gallery, four of eight nodes, spans three steps and stays a
+  box, as the owner saw it. A group holding every seat stays a box,
+  since nothing on the ring lies outside it. A box that clears at no
+  turn becomes a band, with everything above and below it, up to
+  three times, and the retry stands only if it clashes less. A band
+  follows the ring, so a seatless member, the
+  hub, neither sets its angles nor is wrapped by it. A band's title
+  sits outside it on the ray through its middle, and a nested band's
+  title sits in the strip between it and its parent, from the
+  renderer's measured title size. A box's title goes on top, unless
+  an edge cutting across the ring (a spoke, chord or spur) crosses the
+  top's title strip while no edge would cross the bottom's: then the
+  title room moves to the bottom, if nothing new clashes. The owner
+  chose this for the wheel, where the spokes ran through "Delivery".
+  Rim arcs don't count, since a title over a rim member always meets
+  the ring's own arrow into it, as in the water cycle. Each box title
+  then takes the spot along its strip nearest the middle that no edge
+  crosses; `titleSide` and `title` report both. Edge labels slide off
+  group titles as they do off nodes. Shapes keep 8px of clearance,
+  measured on walls sampled every 4px. When no turn clears,
+  `groupsClear` is false rather than silent. A fitting spends at most
+  400 solves, so a 32-node ring that cannot clear takes about 0.4s
+  instead of over a second. Past the budget, the turns already tried
+  are ranked as they stand and no retry starts. Without the fourth argument nothing is
+  fitted, so a caller that sets `group` alone keeps its layout.
+  Negative padding counts as 0. The fitting's state rides beside the
+  options, not on them. Every call the tests make without the fourth
+  argument returns output byte-identical to main at c7df17f, 162 of
+  162, grouped nodes included. Known limits: a band sweeping nearly
+  the whole ring is clamped short of a full turn, and its corners can
+  then meet what it would have wrapped (the clash test flags it); a
+  nested band's title is checked against nodes and sibling shapes,
+  not against other titles.

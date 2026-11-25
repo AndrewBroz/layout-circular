@@ -1,8 +1,14 @@
-export { circularLayout } from './layout.js';
+export { circularLayout, groupBounds } from './layout.js';
 export type {
+  Bounds,
   CircularLayoutOptions,
   CircularLayoutResult,
+  GroupBand,
+  GroupBox,
+  GroupPadding,
+  GroupShape,
   LayoutEdgeInput,
+  LayoutGroupInput,
   LayoutNodeInput,
   PlacedNode,
   Point,
