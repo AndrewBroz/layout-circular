@@ -1,6 +1,6 @@
 {
   "name": "layout-circular",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Circular graph layout: nodes at equal angles on a circle, edges as arcs of it. Renderer-neutral, with no runtime dependencies.",
   "type": "module",
   "module": "dist/layout-circular.js",
