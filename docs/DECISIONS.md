@@ -40,3 +40,26 @@ before the move are recorded in its `docs/DECISIONS.md`.
   thing, so it belongs with the math. Group boxes stay in each
   renderer, because their padding and title room depend on how the
   renderer draws a group.
+- **2026-11-25 — Straight edges are an option.** The `edges` option,
+  `'arc'` or `'straight'`, default `'arc'`. Arcs emphasize the cycle.
+  Straight lines make a three-cycle a triangle. The owner chose how a
+  diagram selects the variant: mermaid's existing `flowchart.curve:
+  linear`, mapped by each renderer to `edges: 'straight'`. Not a new
+  layout name, because names would multiply (circular × ccw ×
+  straight). `layout` chooses the placement engine, while `curve`
+  already means edge shape. Both renderers already read
+  `flowchart.curve` from frontmatter. And it combines with
+  `circular-ccw` for free. Only `linear` selects straight edges; every
+  other curve keeps the arcs. The core stays renderer-neutral: it
+  knows `edges`, not `curve`.
+  With `'straight'`, rim neighbors and chords run center to center,
+  cut at the true outlines by the same bisection, with a point `tail`
+  in from each end. Chords lose their bow and swerve. Siblings split
+  into parallel lines 6px apart (`STRAIGHT_STEP`). At two rim nodes
+  an opposite pair splits the same way, since a line has no diameter
+  tie to mirror it. Placement, spokes, spurs and self-loops are
+  untouched, and satellites follow the option, so they become
+  polygons too. The path's middle sample is the segment's midpoint, so
+  the existing label placement seats a label there unchanged. With
+  the default, the output is byte-identical to 0.1.1 on every call the
+  existing tests make.

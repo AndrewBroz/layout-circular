@@ -46,6 +46,23 @@ The options and their defaults are `CircularLayoutOptions` and
 are recorded in mermaid-layout-circular's `docs/DECISIONS.md`, where
 the math was developed.
 
+## Straight edges
+
+The `edges` option picks the shape of edges between ring nodes. The
+default, `'arc'`, draws a neighbor edge as an arc of the ring and bows
+chords toward the center. `'straight'` draws both as straight segments
+from border to border:
+
+```ts
+circularLayout(nodes, edges, { edges: 'straight' });
+```
+
+A three-cycle then reads as a triangle, and every ring, satellites
+included, as a polygon. Two opposite edges between one pair become two
+parallel lines a few pixels apart. Placement is the same either way.
+So are hub spokes, spurs and self-loops. A label sits at its segment's
+midpoint, and slides outward when it crowds the boxes beside it.
+
 ## Bundling, not depending
 
 Renderer packages compile this package into their own bundle at build
