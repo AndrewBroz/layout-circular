@@ -2120,6 +2120,11 @@ describe('arc output guard', () => {
       { direction: 'counterclockwise' },
     ],
     ['two nodes, both ways', [box('A'), box('B')], [edge('A', 'B'), edge('B', 'A')]],
+    [
+      'grouped nodes, no groups passed',
+      ring.map((id) => ({ ...box(id), ...(id === 'B' || id === 'C' ? { group: 'G' } : {}) })),
+      cycle(...ring),
+    ],
   ];
   for (const [name, nodes, edges, options] of cases) {
     it(`keeps ${name} exactly as it was`, () => {

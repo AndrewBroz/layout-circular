@@ -21,6 +21,19 @@
  * given, without trimming them to node boundaries again.
  */
 
+import { fitGroups, groupTreeOf, titleRects } from './groups.js';
+import type { GroupShape, LayoutGroupInput, RingFit } from './groups.js';
+
+export { groupBounds } from './groups.js';
+export type {
+  Bounds,
+  GroupBand,
+  GroupBox,
+  GroupPadding,
+  GroupShape,
+  LayoutGroupInput,
+} from './groups.js';
+
 export interface LayoutNodeInput {
   id: string;
   width: number;
@@ -32,8 +45,11 @@ export interface LayoutNodeInput {
    *  its capsule. Shapes without a closer family default to 'box',
    *  which over-reserves and never overlaps. */
   shape?: 'box' | 'ellipse' | 'diamond' | 'stadium';
-  /** Subgraph membership. Members of one group are seated side by
-   *  side on their ring, so a box drawn around them wraps one arc. */
+  /** Subgraph membership: the innermost group holding the node.
+   *  Members of one group are seated side by side on their ring, so
+   *  a shape drawn around them wraps one arc. Describe the group
+   *  itself, its padding and its parent, in `circularLayout`'s
+   *  `groups`. */
   group?: string;
 }
 
@@ -137,6 +153,14 @@ export interface CircularLayoutResult {
   hub?: string;
   /** Cycles hanging off the main ring, each drawn as its own circle. */
   satellites?: SatelliteRing[];
+  /** One shape per group with placed members, a box or a band, when
+   *  `circularLayout` was given its groups. */
+  groups?: GroupShape[];
+  /** Whether every group's shape keeps clear of every node outside it
+   *  and of its sibling shapes. False when no turn, growth or band
+   *  could make room; the shapes are still returned. Present only with
+   *  `groups`. */
+  groupsClear?: boolean;
 }
 
 const TAU = 2 * Math.PI;
@@ -249,10 +273,21 @@ const GROUP_PAD = 16;
  * expansion enters through the member that touches what came before,
  * reversing the internal run when that member sits at its far end,
  * so the written path keeps reading forward across the boundary.
+ * Nested groups collapse level by level: the outermost groups first,
+ * then each group's own children inside its expansion.
  */
-const orderRim = (rimNodes: LayoutNodeInput[], rimEdges: LayoutEdgeInput[]): string[] => {
+const orderRim = (
+  rimNodes: LayoutNodeInput[],
+  rimEdges: LayoutEdgeInput[],
+  /** Each grouped node's groups, outermost first. Without it, a
+   *  node's own `group` is its only level. */
+  chains?: Map<string, string[]>,
+  level = 0
+): string[] => {
+  const groupAt = (n: LayoutNodeInput): string | undefined =>
+    chains ? chains.get(n.id)?.[level] : level === 0 ? n.group : undefined;
   const groupOf = new Map(
-    rimNodes.filter((n) => n.group !== undefined).map((n) => [n.id, n.group!])
+    rimNodes.filter((n) => groupAt(n) !== undefined).map((n) => [n.id, groupAt(n)!])
   );
   if (groupOf.size === 0) {
     return followEdges(rimNodes, rimEdges);
@@ -281,9 +316,11 @@ const orderRim = (rimNodes: LayoutNodeInput[], rimEdges: LayoutEdgeInput[]): str
       continue;
     }
     const memberSet = new Set(members);
-    const inner = followEdges(
+    const inner = orderRim(
       rimNodes.filter((n) => memberSet.has(n.id)),
-      rimEdges.filter((e) => memberSet.has(e.start) && memberSet.has(e.end))
+      rimEdges.filter((e) => memberSet.has(e.start) && memberSet.has(e.end)),
+      chains,
+      level + 1
     );
     const prev = out[out.length - 1];
     let run = inner;
@@ -903,7 +940,12 @@ type RingOptions = Omit<Required<CircularLayoutOptions>, 'direction'>;
 export const circularLayout = (
   nodes: LayoutNodeInput[],
   edges: LayoutEdgeInput[],
-  options: CircularLayoutOptions = {}
+  options: CircularLayoutOptions = {},
+  /** The groups the nodes' `group` fields name: padding, title and
+   *  nesting. Given, the layout fits a shape around each group (see
+   *  `fitGroups`). Left out, grouped nodes are only seated together,
+   *  and the layout is the one they had before shapes were placed. */
+  groups?: LayoutGroupInput[]
 ): CircularLayoutResult => {
   // An option that is present but undefined must not clobber its
   // default; a renderer's config often supplies exactly that shape.
@@ -911,19 +953,30 @@ export const circularLayout = (
     Object.entries(options).filter(([, value]) => value !== undefined)
   ) as CircularLayoutOptions;
   const { direction, ...ringOptions } = { ...defaults, ...given };
-  if (direction === 'counterclockwise') {
-    // The mirror sends angle φ to π − φ, so solving at π − startAngle
-    // lands the first node back on startAngle.
-    const solved = layoutRing(
-      nodes,
-      edges,
-      { ...ringOptions, startAngle: Math.PI - ringOptions.startAngle },
-      undefined
-    );
-    return withLabels(mirrored(solved), nodes, edges);
+  const solve = (fit?: RingFit): CircularLayoutResult => {
+    if (direction === 'counterclockwise') {
+      // The mirror sends angle φ to π − φ, so solving at π − startAngle
+      // lands the first node back on startAngle.
+      return mirrored(
+        layoutRing(
+          nodes,
+          edges,
+          { ...ringOptions, startAngle: Math.PI - ringOptions.startAngle },
+          undefined,
+          false,
+          fit
+        )
+      );
+    }
+    return layoutRing(nodes, edges, ringOptions, undefined, false, fit);
+  };
+  const tree = groups === undefined ? undefined : groupTreeOf(nodes, groups);
+  if (tree === undefined) {
+    return withLabels(solve(), nodes, edges);
   }
-  const clockwise = layoutRing(nodes, edges, ringOptions, undefined);
-  return withLabels(clockwise, nodes, edges);
+  // Group titles are one more thing an edge label slides off.
+  const fitted = fitGroups(nodes, tree, solve);
+  return withLabels(fitted, nodes, edges, titleRects(fitted.groups ?? [], tree));
 };
 
 /** Daylight between a parallel edge's label and the line it clears,
@@ -964,10 +1017,15 @@ const isStraight = (points: Point[]): boolean => {
 const withLabels = (
   result: CircularLayoutResult,
   nodes: LayoutNodeInput[],
-  edges: LayoutEdgeInput[]
+  edges: LayoutEdgeInput[],
+  /** Boxes a label must keep off besides the nodes: group titles. */
+  obstacles: { id: string; x: number; y: number; width: number; height: number }[] = []
 ): CircularLayoutResult => {
   const size = new Map(nodes.map((n) => [n.id, n]));
-  const placed = result.nodes.map((p) => ({ x: p.x, y: p.y, n: size.get(p.id)! }));
+  const placed = [
+    ...result.nodes.map((p) => ({ x: p.x, y: p.y, n: size.get(p.id)! })),
+    ...obstacles.map(({ x, y, ...n }) => ({ x, y, n })),
+  ];
   const labelOf = new Map(edges.map((e) => [e.id, e]));
   const parallel = parallelGroups(result, labelOf);
   const grouped = new Set([...parallel.values()].flat());
@@ -1230,9 +1288,14 @@ const layoutRing = (
    *  parent — so every tangent recursion toggles this; a bridge
    *  satellite turns with its parent, like a shaft, and passes it
    *  through unchanged. */
-  reversed = false
+  reversed = false,
+  /** How the ring is turned and grown around group shapes, when the
+   *  caller gave groups (see fitGroups). A satellite gets its nesting
+   *  only: no turn and no growth. */
+  fit?: RingFit
 ): CircularLayoutResult => {
   const { spacing, startAngle, ordering, samples, tail, hub } = opts;
+  const satelliteFit = fit && { ...fit, turn: 0, halfStep: false, grow: 0 };
   // The gap between a node and what hangs off it radially: 80% of
   // the rim spacing.
   const spurGap = spacing * 0.8;
@@ -1359,7 +1422,8 @@ const layoutRing = (
         subEdges,
         { ...opts, hub: 'none' },
         subAnchor,
-        tangent ? !reversed : reversed
+        tangent ? !reversed : reversed,
+        satelliteFit
       );
       const discR = Math.max(
         ...probe.nodes.map((n) => Math.hypot(n.x, n.y) + footprint(byId.get(n.id)!))
@@ -1459,6 +1523,11 @@ const layoutRing = (
     }
   }
   const hubNode = hubId === undefined ? undefined : byId.get(hubId);
+  for (const [parent, kids] of childrenOf) {
+    for (const kid of kids) {
+      fit?.spurParents.set(kid, parent);
+    }
+  }
 
   // Satellites grouped by the ring node they hang from.
   const plansByAnchor = new Map<string, SatellitePlan[]>();
@@ -1470,7 +1539,7 @@ const layoutRing = (
   const rimEdges = edges.filter((e) => rim.has(e.start) && rim.has(e.end));
 
   let order =
-    ordering === 'input' ? rimNodes.map((n) => n.id) : orderRim(rimNodes, rimEdges);
+    ordering === 'input' ? rimNodes.map((n) => n.id) : orderRim(rimNodes, rimEdges, fit?.chains);
   // A satellite is solved facing home: its anchor (or, when the
   // anchor hangs off the ring, the ring node it hangs from) becomes
   // the first seat, which startAngle then pins. Rotating a cyclic
@@ -1493,6 +1562,11 @@ const layoutRing = (
       const at = order.indexOf(seat);
       order = [...order.slice(at), ...order.slice(0, at)];
     }
+  }
+  if (fit !== undefined && fit.turn % order.length !== 0) {
+    // A turned ring: the seat `turn` takes the top, every neighbor kept.
+    const at = fit.turn % order.length;
+    order = [...order.slice(at), ...order.slice(0, at)];
   }
   if (reversed) {
     // Cyclic reversal about the first seat: the anchor stays pinned,
@@ -1559,7 +1633,8 @@ const layoutRing = (
       labeledGapNeed = Math.max(labeledGapNeed, e.labelWidth + 48);
     }
   }
-  const targetGap = Math.max(spacing, labeledGapNeed);
+  // Groups grow the ring by widening every gap alike.
+  const targetGap = Math.max(spacing, labeledGapNeed) + (fit?.grow ?? 0);
 
   // A labeled spur needs radial room the same way a labeled rim gap
   // needs arc: the gap between the two borders must hold the label's
@@ -1609,15 +1684,35 @@ const layoutRing = (
     for (let i = 1; i < nRim; i++) {
       next.push(next[i - 1]! + (extents[i - 1]! + extents[i]! + gap) / nextRadius);
     }
-    for (let i = 1; i * 2 < nRim; i++) {
-      const phiNear = next[i]! - startAngle;
-      const phiFar = next[nRim - i]! - startAngle;
-      const mirroredPhi = (phiNear + (TAU - phiFar)) / 2;
-      next[i] = startAngle + mirroredPhi;
-      next[nRim - i] = startAngle + TAU - mirroredPhi;
-    }
-    if (nRim % 2 === 0) {
-      next[nRim / 2] = startAngle + Math.PI;
+    if (fit?.halfStep && nRim > 1) {
+      // The half-step: the gap between the last seat and the first
+      // takes the top instead of a seat. Turn the ring so that gap's
+      // middle sits on startAngle, then mirror i with n−1−i, and pin
+      // an odd ring's middle seat to the bottom.
+      const shift = startAngle + TAU - (next[0]! + TAU + next[nRim - 1]!) / 2;
+      for (let i = 0; i < nRim; i++) {
+        next[i] = next[i]! + shift;
+      }
+      for (let i = 0; i * 2 < nRim - 1; i++) {
+        const j = nRim - 1 - i;
+        const mirroredPhi = (next[i]! - startAngle + (TAU - (next[j]! - startAngle))) / 2;
+        next[i] = startAngle + mirroredPhi;
+        next[j] = startAngle + TAU - mirroredPhi;
+      }
+      if (nRim % 2 === 1) {
+        next[(nRim - 1) / 2] = startAngle + Math.PI;
+      }
+    } else {
+      for (let i = 1; i * 2 < nRim; i++) {
+        const phiNear = next[i]! - startAngle;
+        const phiFar = next[nRim - i]! - startAngle;
+        const mirroredPhi = (phiNear + (TAU - phiFar)) / 2;
+        next[i] = startAngle + mirroredPhi;
+        next[nRim - i] = startAngle + TAU - mirroredPhi;
+      }
+      if (nRim % 2 === 0) {
+        next[nRim / 2] = startAngle + Math.PI;
+      }
     }
     angles = next;
     radius = nextRadius;
@@ -1759,7 +1854,8 @@ const layoutRing = (
         plan.subEdges,
         { ...opts, hub: 'none', startAngle: ray + Math.PI },
         plan.subAnchor,
-        plan.tangent ? !reversed : reversed
+        plan.tangent ? !reversed : reversed,
+        satelliteFit
       );
       const subA = sub.nodes.find((n) => n.id === plan.subAnchor)!;
       const aDist = Math.hypot(subA.x, subA.y);

@@ -42,6 +42,63 @@ Each edge has `points`, a sampled path that starts and ends exactly on
 the node outlines. Draw the paths as given. Trimming them to node
 boundaries again moves the arrowheads off the curve.
 
+## Groups
+
+A node's `group` names the innermost group (subgraph) it belongs to.
+Members of one group sit side by side on their ring. Describe each
+group in the fourth argument: its padding, which is the room the
+renderer leaves between the wall and what it wraps (the top usually
+holds the title too), its title's measured size, and its parent, for
+nesting.
+
+```ts
+const { groups, groupsClear } = circularLayout(nodes, edges, {}, [
+  { id: 'Atmosphere', padding: { top: 36, right: 12, bottom: 12, left: 12 }, title: { width: 84, height: 20 } },
+  { id: 'Clouds', parent: 'Atmosphere', padding: { top: 36, right: 12, bottom: 12, left: 12 } },
+]);
+```
+
+Each group comes back as one of two shapes, told apart by `kind`:
+
+- A **box**: a center `x`, `y`, a `width` and a `height`. It hugs the
+  group's members and child boxes with exactly the padding given.
+- A **band**: a slice of the ring between `innerRadius` and
+  `outerRadius`, swept clockwise from `startAngle` to `endAngle`
+  around `center`. Draw it as an annular sector. A group is a band
+  when its first and last members' seats span half the ring or more,
+  and so is everything nested in it. A rectangle around that much of
+  a circle would cover the middle.
+
+Every shape has a `title` point. A box also has `titleSide`. Its
+title goes on top, unless a spoke, chord or spur crosses the top's
+title strip while the bottom's is clear: then the title room moves to
+the bottom. The title point is the middle of that room, at the spot
+along it nearest the middle that no edge crosses. A band's title
+reads horizontally, centered on its point: just outside the band, on
+the ray through its middle. A band nested in a band seats its title in
+the strip between the two. Edge labels slide off titles as they do off
+nodes. `groupBounds(shape)` gives any shape's bounding box.
+
+The layout keeps the circle whole to make room for the shapes. Gaps
+stay even, the radius stays one, and the ring stays mirror-symmetric.
+Instead it turns the ring, so another node takes the top, or the gap
+between two nodes does. It takes the least turn that clears within
+1.15 times the radius, then the least growth. Failing that, the least
+growth that clears within 1.5 times. A box that clears at no turn
+becomes a band. Shapes keep 8px clear of every node outside the group
+and of their sibling shapes. When nothing works, `groupsClear` is
+`false` and the shapes are still returned.
+
+Known limits: a band sweeping nearly the whole ring stops short of a
+full turn, and its corners can meet what it would have wrapped; the
+flag says so. A nested band's title is not checked against other
+titles.
+
+Without the fourth argument, grouped nodes are only seated together,
+and the layout is the one they always had: no turn, no growth, and
+no `groups` in the result. A group named only by members has no
+padding. A layout without grouped nodes is unchanged either way.
+
 The options and their defaults are `CircularLayoutOptions` and
 `defaults` in `src/layout.ts`: `spacing`, `startAngle`, `ordering`,
 `samples`, `tail`, `direction`, `hub`, `edges` and `parallelGap`. The
