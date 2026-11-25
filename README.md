@@ -10,7 +10,7 @@ such renderers: tools that turn diagram text into images.
 
 ## What it does
 
-<img src="docs/media/anatomy.svg" width="480" alt="Five boxes on a circle from Plan to Learn, a dashed line from Build to Ship, Idea above Plan, and a small loop of three off Test.">
+<img src="docs/media/anatomy.svg" width="313" alt="Five boxes on a circle from Plan to Learn, a dashed line from Build to Ship, Idea above Plan, and a small loop of three off Test.">
 
 A layout is where each box goes, and the path each arrow takes. This
 one puts the nodes of a cycle on a circle. In the picture:
@@ -22,8 +22,8 @@ one puts the nodes of a cycle on a circle. In the picture:
 - The dashed line from Build to Ship is a **chord**. A chord is an
   arrow between two nodes that are not next to each other. It is a
   straight line across the circle.
-- Idea is a **branch**: a node that hangs off the ring, pointing
-  outward.
+- Idea is a **branch**: a node that sits outside the ring, beyond the
+  one ring node it links to.
 - Debug, Fix and Retest form a **satellite**: a second, smaller cycle
   hanging off the ring. It gets its own circle.
 
@@ -144,7 +144,7 @@ Each group comes back as one of two shapes, told apart by `kind`:
 
 | `kind: 'box'` | `kind: 'band'` |
 | --- | --- |
-| <img src="docs/media/lifecycle-box.svg" width="360" alt="Eight boxes on a circle. Build and Test sit inside a grey box titled Make, at the bottom right."> | <img src="docs/media/lifecycle-band.svg" width="360" alt="The same eight boxes on a circle. A grey curved strip titled Funded wraps six of them, from Spec to Monitor."> |
+| <img src="docs/media/lifecycle-box.svg" width="291" alt="Eight boxes on a circle. Build and Test sit inside a gray box titled Make, at the bottom right."> | <img src="docs/media/lifecycle-band.svg" width="340" alt="The same eight boxes on a circle. A gray curved strip titled Funded wraps six of them, from Spec to Monitor."> |
 
 A group becomes a band when it covers half the ring or more. A
 rectangle around that much of a circle would cover its middle.
@@ -208,7 +208,7 @@ circularLayout(nodes, edges, { edges: 'straight' });
 
 | `edges: 'arc'` (the default) | `edges: 'straight'` |
 | --- | --- |
-| <img src="docs/media/daily-arcs.svg" width="360" alt="Five boxes on a circle joined by curved labelled arrows, with a dashed straight line from Work to Home."> | <img src="docs/media/daily-straight.svg" width="360" alt="The same five boxes joined by straight labelled arrows into a pentagon, with the same dashed line from Work to Home."> |
+| <img src="docs/media/daily-arcs.svg" width="259" alt="Five boxes on a circle joined by curved labelled arrows, with a dashed straight line from Work to Home."> | <img src="docs/media/daily-straight.svg" width="259" alt="The same five boxes joined by straight labelled arrows into a pentagon, with the same dashed line from Work to Home."> |
 
 The nodes sit in the same places either way. Chords are always
 straight, in both modes.

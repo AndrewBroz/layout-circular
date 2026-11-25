@@ -113,7 +113,7 @@ first use, in the sentence or right after it. In user READMEs, say
 | arc | an arrow drawn along the circle, between two nodes next to each other |
 | chord | an arrow between two nodes that are not next to each other; a straight line across the circle |
 | hub | one node linked to most of the others; it goes in the middle |
-| branch | a node that hangs off the ring, pointing outward |
+| branch | a node that sits outside the ring, beyond the one ring node it links to |
 | satellite | a second, smaller cycle hanging off the ring; it gets its own circle |
 | figure-eight | two cycles that share one node |
 | group | a mermaid subgraph: a set of nodes drawn inside one shape |
@@ -180,25 +180,22 @@ added. For a PNG, its pixel width divided by 2. The render scripts print
 it for every file.
 
 **Display width.** Set `width` on every `<img>`. Never set `height`.
-Slots:
 
-| Slot | `width` | Used for |
-| --- | --- | --- |
-| lead | min(natural, 480) | the first picture of a README; single pictures |
-| pair | 360 each | two pictures side by side in a table |
-| grid | min(natural, 380) | showcase grid cells, two per row |
-| gallery | min(natural, 640) | `docs/GALLERY.md` entries |
+**One scale per README.** Within one README, every picture's display
+width is its natural width times one shared factor, rounded to a whole
+pixel. Node text is 16 px at natural size, so the shared factor makes
+it read at the same size in every picture. Pick the factor once for the
+whole README. A separate doc, such as `docs/GALLERY.md`, picks its own.
 
-Two cells of 360 or 380, with cell padding, stay under GitHub's README
-column (about 830 px). On npm, tables shrink to fit the column (seen on
-the current npm page), so nothing overflows.
+- Inside a table, the factor is at least 0.65, so node text stays at
+  about 10 px or more.
+- No table row is over about 600 px wide, pictures and cell padding
+  together. npm shrinks a wider table to fit its column, and that
+  breaks the shared scale.
 
-**Legibility floor.** Node text is 16 px at natural size. The display
-width divided by the natural width must be at least 0.6 for a lead or
-pair picture, and at least 0.5 for a grid cell. A diagram that falls
-below the floor moves to the gallery. It doesn't get squeezed. (Today's
-Krebs picture would display at 0.44 in a grid cell. That is why it moved
-to the gallery.)
+A diagram that can't meet both moves to the gallery. It doesn't get
+squeezed. The widths in the examples on this page are only examples:
+compute real ones from the factor.
 
 **Alt text.**
 
@@ -213,7 +210,7 @@ Examples:
   curved arrows."
 - "The same five boxes in a row, with one long arrow looping back from
   Collection to Evaporation."
-- "Eight boxes on a circle. Build and Test sit inside a grey box
+- "Eight boxes on a circle. Build and Test sit inside a gray box
   titled Make."
 
 **Captions.** In a pair, the table header row is the caption ("Curved
@@ -227,7 +224,7 @@ Every picture is a white card:
 
 - background `#ffffff`;
 - 16 px padding around the diagram;
-- 1 px border `#d0d7de` (GitHub's own light border colour);
+- 1 px border `#d0d7de` (GitHub's own light border color);
 - 8 px corner radius, with transparent corners.
 
 Why: GitHub's dark theme puts a dark page behind images. A transparent
@@ -255,9 +252,9 @@ How:
 - **Obsidian PNG.** Use the default theme in light mode. Crop to the
   note's content and add the same border, with square corners.
 
-Colours inside the diagrams stay at each renderer's defaults: Pele's
+Colors inside the diagrams stay at each renderer's defaults: Pele's
 light theme, and mermaid's `neutral` theme (the demo already uses it).
-Both are grey boxes and dark ink, so the family looks alike.
+Both are gray boxes and dark ink, so the family looks alike.
 
 ## Pairs and grids
 

@@ -117,8 +117,8 @@ it, and between sibling shapes. That is enough for the wall and its
 neighbor to read as two separate things.
 
 The layout tries each turn and finds how much each one must grow. It
-picks the smallest turn that clears within 1.15 times the radius, then
-the one that grows least. 15% is about where a grown ring starts to look
+picks the smallest turn that clears within 1.15 times the radius,
+breaking ties by least growth. 15% is about where a grown ring starts to look
 roomier than its spacing. If no turn clears that cheaply, it picks the
 turn that grows least within 1.5 times the radius. That cap keeps the
 diagram from swelling for one group. In the test diagrams used to choose
@@ -131,13 +131,15 @@ too. A group that holds every node on the ring stays a box, since
 nothing on the ring lies outside it. A box that clears at no turn is
 also redrawn as a band, together with the groups it sits in and the
 groups inside it. The layout tries this up to three times, and keeps
-the band only if it clashes less than the box did. A hub in the middle is never wrapped by a band.
+the band only if it clashes less than the box did. A hub in the
+middle is never wrapped by a band.
 
 A box's title goes at the top. Sometimes an edge across the ring, such
 as a spoke, chord or branch, crosses the strip where the title would
-go. If no edge crosses the bottom strip, the title moves there. Arcs don't count, since an arc
-always enters a box on the ring. Along its strip, the title takes the
-spot nearest the middle that no edge crosses.
+go. If no edge crosses the bottom strip, the title moves there. Arcs
+don't count, since an arc always enters a box on the ring. Along its
+strip, the title takes the spot nearest the middle that no edge
+crosses.
 
 A band's title reads level. It sits outside the band, 6 pixels beyond
 its outer edge, about half a line, on the line through the band's
