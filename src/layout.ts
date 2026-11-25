@@ -925,9 +925,29 @@ export const circularLayout = (
       { ...ringOptions, startAngle: Math.PI - ringOptions.startAngle },
       undefined
     );
-    return withLabels(mirrored(solved), nodes, edges);
+    return withLabels(mirrored(solved), nodes, edges, ringOptions.edges);
   }
-  return withLabels(layoutRing(nodes, edges, ringOptions, undefined), nodes, edges);
+  const clockwise = layoutRing(nodes, edges, ringOptions, undefined);
+  return withLabels(clockwise, nodes, edges, ringOptions.edges);
+};
+
+/** Daylight between a parallel edge's label and the line it clears,
+ *  and between neighboring labels of one group: 4px, about half a
+ *  text line's descender gap, so a label reads as beside its line
+ *  rather than touching it. */
+const PARALLEL_LABEL_CLEARANCE = 4;
+
+/** True when every sample of a path lies on the line through its ends. */
+const isStraight = (points: Point[]): boolean => {
+  const a = points[0]!;
+  const b = points[points.length - 1]!;
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  if (len === 0) {
+    return false;
+  }
+  return points.every(
+    (p) => Math.abs((p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x)) / len < 1e-6
+  );
 };
 
 /**
@@ -939,32 +959,32 @@ export const circularLayout = (
  * home inside the gap beats an airier one outside the ring. Only when
  * even the modest fit fails does it slide, and then it clears
  * generously. A chord's label lives in the middle, which the swerve
- * already keeps clear.
+ * already keeps clear. Straight parallel lines get their own pass,
+ * `withParallelLabels`, since their middles sit only a gap apart.
  */
 const withLabels = (
   result: CircularLayoutResult,
   nodes: LayoutNodeInput[],
-  edges: LayoutEdgeInput[]
+  edges: LayoutEdgeInput[],
+  edgeMode: 'arc' | 'straight' = 'arc'
 ): CircularLayoutResult => {
   const size = new Map(nodes.map((n) => [n.id, n]));
   const placed = result.nodes.map((p) => ({ x: p.x, y: p.y, n: size.get(p.id)! }));
   const labelOf = new Map(edges.map((e) => [e.id, e]));
+  const parallel =
+    edgeMode === 'straight' ? parallelGroups(result, labelOf) : new Map<string, RoutedEdge[]>();
+  const grouped = new Set([...parallel.values()].flat());
   for (const edge of result.edges) {
     const input = labelOf.get(edge.id);
     const w = input?.labelWidth ?? 0;
-    if (w <= 0 || edge.points.length === 0) {
+    if (w <= 0 || edge.points.length === 0 || grouped.has(edge)) {
       continue;
     }
     const h = input?.labelHeight ?? LABEL_LINE;
     const mid = edge.points[Math.floor(edge.points.length / 2)]!;
     let at = mid;
     const r = Math.hypot(mid.x, mid.y);
-    const collides = (p: Point, breath: number): boolean =>
-      placed.some(
-        (q) =>
-          Math.abs(p.x - q.x) < (w + breath + q.n.width) / 2 &&
-          Math.abs(p.y - q.y) < (h + breath + q.n.height) / 2
-      );
+    const collides = (p: Point, breath: number): boolean => collidesAny(placed, p, w, h, breath);
     if (edge.onRim && r > 0 && collides(at, 14)) {
       // A wide label needs a longer slide before it can clear.
       const maxPush = 64 + w + h;
@@ -974,7 +994,140 @@ const withLabels = (
     }
     edge.label = at;
   }
+  for (const group of parallel.values()) {
+    withParallelLabels(group, result, placed, labelOf);
+  }
   return result;
+};
+
+type PlacedBox = { x: number; y: number; n: LayoutNodeInput };
+
+const collidesAny = (
+  placed: PlacedBox[],
+  p: Point,
+  w: number,
+  h: number,
+  breath: number
+): boolean =>
+  placed.some(
+    (q) =>
+      Math.abs(p.x - q.x) < (w + breath + q.n.width) / 2 &&
+      Math.abs(p.y - q.y) < (h + breath + q.n.height) / 2
+  );
+
+/**
+ * Straight edges sharing a pair of nodes, keyed by the sorted pair,
+ * for groups of two or more where at least one carries a label. Only
+ * truly straight paths count: spur siblings bow apart even in
+ * straight mode and keep the ordinary placement.
+ */
+const parallelGroups = (
+  result: CircularLayoutResult,
+  labelOf: Map<string, LayoutEdgeInput>
+): Map<string, RoutedEdge[]> => {
+  const byPair = new Map<string, RoutedEdge[]>();
+  for (const edge of result.edges) {
+    if (edge.start === edge.end || edge.points.length < 2 || !isStraight(edge.points)) {
+      continue;
+    }
+    const key = pairKey(edge.start, edge.end);
+    byPair.set(key, [...(byPair.get(key) ?? []), edge]);
+  }
+  return new Map(
+    [...byPair].filter(
+      ([, group]) =>
+        group.length > 1 && group.some((e) => (labelOf.get(e.id)?.labelWidth ?? 0) > 0)
+    )
+  );
+};
+
+/**
+ * Labels for one group of parallel straight lines. Each label leaves
+ * its line's middle perpendicular to it, away from the group's center
+ * line, far enough that its rectangle clears its own line and every
+ * label nearer the center. The rectangle's reach across the line is
+ * its width and height projected onto the perpendicular. A label on
+ * the center line itself (the middle of an odd fan) stays put. A rim
+ * label that still crowds a box then slides on, the same way it was
+ * already heading, so it never crosses back over a sibling.
+ */
+const withParallelLabels = (
+  group: RoutedEdge[],
+  result: CircularLayoutResult,
+  placed: PlacedBox[],
+  labelOf: Map<string, LayoutEdgeInput>
+): void => {
+  // The sorted pair, so both directions share one center-line frame.
+  const [first, second] = [group[0]!.start, group[0]!.end].sort();
+  const from = result.nodes.find((n) => n.id === first);
+  const to = result.nodes.find((n) => n.id === second);
+  if (!from || !to) {
+    return;
+  }
+  const normal = unit({ x: to.y - from.y, y: -(to.x - from.x) });
+  const across = (p: Point) => (p.x - from.x) * normal.x + (p.y - from.y) * normal.y;
+  const seats = group.map((edge) => {
+    const input = labelOf.get(edge.id);
+    const w = input?.labelWidth ?? 0;
+    const h = input?.labelHeight ?? LABEL_LINE;
+    const mid = edge.points[Math.floor(edge.points.length / 2)]!;
+    const offset = across(mid);
+    return {
+      edge,
+      w,
+      h,
+      mid,
+      offset,
+      reach: (w * Math.abs(normal.x) + h * Math.abs(normal.y)) / 2,
+      // Under a pixel from the center line counts as on it.
+      side: Math.abs(offset) < 0.5 ? 0 : Math.sign(offset),
+    };
+  });
+  // Nearest the center first, so each label stacks on the last.
+  seats.sort((p, q) => Math.abs(p.offset) - Math.abs(q.offset));
+  const middle = seats.find((s) => s.side === 0 && s.w > 0);
+  if (middle) {
+    // A middle label stays on its line, as a lone edge's would, and
+    // slides radially out of a crowded gap the same way. The labels
+    // beside it then stack on wherever it ends up.
+    const { mid, w, h } = middle;
+    const r = Math.hypot(mid.x, mid.y);
+    let at = mid;
+    const collides = (p: Point, breath: number) => collidesAny(placed, p, w, h, breath);
+    if (middle.edge.onRim && r > 0 && collides(at, 14)) {
+      const maxPush = 64 + w + h;
+      for (let push = 8; collides(at, 32) && push <= maxPush; push += 8) {
+        at = { x: (mid.x * (r + push)) / r, y: (mid.y * (r + push)) / r };
+      }
+    }
+    middle.edge.label = at;
+  }
+  for (const side of [1, -1]) {
+    // How far the labels placed so far reach toward this side.
+    let reached = middle ? side * across(middle.edge.label!) + middle.reach : -Infinity;
+    for (const seat of seats) {
+      if (seat.side !== side || seat.w <= 0) {
+        continue;
+      }
+      const c = PARALLEL_LABEL_CLEARANCE;
+      const want = Math.max(side * seat.offset + c + seat.reach, reached + c + seat.reach);
+      const shift = want - side * seat.offset;
+      const base = {
+        x: seat.mid.x + normal.x * side * shift,
+        y: seat.mid.y + normal.y * side * shift,
+      };
+      let at = base;
+      const collides = (p: Point, breath: number) => collidesAny(placed, p, seat.w, seat.h, breath);
+      if (seat.edge.onRim && collides(at, 14)) {
+        const maxPush = 64 + seat.w + seat.h;
+        for (let push = 8; collides(at, 32) && push <= maxPush; push += 8) {
+          at = { x: base.x + normal.x * side * push, y: base.y + normal.y * side * push };
+        }
+      }
+      seat.edge.label = at;
+      reached = side * across(at) + seat.reach;
+    }
+  }
 };
 
 /**

@@ -73,3 +73,17 @@ before the move are recorded in its `docs/DECISIONS.md`.
   suits mermaid. Pele passes 8. An explicit `edges: undefined` means
   arcs everywhere, including the two-node pair key. Exact snapshots of
   four arc layouts now guard the default output in the tests.
+- **2026-11-25 — Labels of parallel straight lines step aside.** Both
+  labels of a straight opposite pair sat at their lines' middles,
+  only `parallelGap` apart, and overprinted. "next" and "prev" read
+  as "n prev" in Pele. Now each label of a parallel group leaves its
+  line perpendicular to it, away from the group's center line. The
+  distance is the label's width and height projected onto that
+  perpendicular, plus 4px of clearance. Labels further out stack on
+  the ones nearer the center, so no two overlap and none crosses a
+  sibling line. The middle label of an odd fan stays on its line. A
+  rim label that still crowds a box slides on in the direction it
+  stepped, not radially, so it never crosses back over its sibling.
+  The middle label keeps the radial slide. Only truly straight paths
+  group, so bowed spur siblings keep the old placement. A lone edge's
+  label is unchanged, and the arcs are byte-identical.
