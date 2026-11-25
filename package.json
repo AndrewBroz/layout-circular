@@ -1,7 +1,7 @@
 {
   "name": "layout-circular",
   "version": "0.2.0",
-  "description": "Circular graph layout: nodes at equal angles on a circle, edges as arcs of it. Renderer-neutral, with no runtime dependencies.",
+  "description": "Circular graph layout math. Places nodes on a circle and routes edges along it. No renderer, no DOM, no dependencies.",
   "type": "module",
   "module": "dist/layout-circular.js",
   "types": "dist/index.d.ts",
@@ -24,11 +24,17 @@
     "lint": "eslint . && tsc -p tsconfig.json"
   },
   "keywords": [
+    "graph-layout",
+    "circular-layout",
     "layout",
     "circular",
+    "circle",
     "cycle",
+    "ring",
     "graph",
-    "diagram"
+    "diagram",
+    "mermaid",
+    "pele"
   ],
   "author": "Andrew Broz",
   "repository": {
