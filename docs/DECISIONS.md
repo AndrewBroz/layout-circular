@@ -188,3 +188,15 @@ before the move are recorded in its `docs/DECISIONS.md`.
   then meet what it would have wrapped (the clash test flags it); a
   nested band's title is checked against nodes and sibling shapes,
   not against other titles.
+- **2026-11-25 — The docs are rewritten for readers.** The README
+  leads with what the package does and one picture, the "anatomy"
+  diagram, which names ring, arc, chord, branch and satellite. Install
+  and the shared "Which package to use" table follow, the same table in
+  all four family READMEs. The box/band and arc/straight pairs show
+  what `kind` and `edges` mean. Options moved to `docs/OPTIONS.md`,
+  with each default and its reason. The placement rules, with their
+  numbers, and the known limits moved to `docs/HOW-IT-WORKS.md`, in
+  plain words for users. The family's documentation rules live in
+  `docs/DOCS-STYLE.md`, and the other repos point here. The pictures
+  are Pele SVGs on a white card, so they read on GitHub's dark theme
+  and on npm.

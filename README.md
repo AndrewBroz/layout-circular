@@ -1,22 +1,84 @@
 # layout-circular
 
-A circular graph layout. Nodes sit at equal angles on one circle, and
-an edge between neighbors is an arc of that same circle. A chord, an
-edge between ring nodes that aren't neighbors, is a straight line
-across the ring. A clear hub moves to the center, side branches hang
-off radially, and a cycle hanging off the ring becomes its own smaller
-circle.
+The math for a circular graph layout. It decides where each node goes
+on a circle, and the path each edge takes. It draws nothing.
 
-The package computes positions and edge paths. It draws nothing, and it
-works with any renderer. It has no runtime dependencies and doesn't use
-the DOM. The same input always gives the same output.
+It has no runtime dependencies and doesn't use the DOM. The same input
+always gives the same output. Renderers use it to draw the pictures.
+[mermaid](https://mermaid.js.org) and [Pele](https://pele.run) are two
+such renderers: tools that turn diagram text into images.
 
-It is the shared core of two renderer packages:
+## What it does
 
-- [mermaid-layout-circular](https://github.com/AndrewBroz/mermaid-layout-circular),
-  for the mermaid codebase.
-- [pele-layout-circular](https://github.com/AndrewBroz/pele-layout-circular),
-  for [Pele](https://pele.run).
+<img src="docs/media/anatomy.svg" width="313" alt="Five boxes on a circle from Plan to Learn, a dashed line from Build to Ship, Idea above Plan, and a small loop of three off Test.">
+
+A layout is where each box goes, and the path each arrow takes. This
+one puts the nodes of a cycle on a circle. In the picture:
+
+- Plan, Build, Test, Ship and Learn form the **ring**, the circle the
+  nodes sit on.
+- The curved arrows between them are **arcs**. An arc is an arrow drawn
+  along the circle, between two nodes next to each other.
+- The dashed line from Build to Ship is a **chord**. A chord is an
+  arrow between two nodes that are not next to each other. It is a
+  straight line across the circle.
+- Idea is a **branch**: a node that sits outside the ring, beyond the
+  one ring node it links to.
+- Debug, Fix and Retest form a **satellite**: a second, smaller cycle
+  hanging off the ring. It gets its own circle.
+
+Three more shapes are not in this picture. A **hub** is one node linked
+to most of the others, and it goes in the middle. A **figure-eight** is
+two cycles that share one node. A **group** is a set of nodes drawn
+inside one shape (mermaid calls it a subgraph). Groups are covered
+[below](#groups).
+
+Pictures here are drawn by Pele, through pele-layout-circular. The text
+of each diagram is under its picture. The block between the two `---`
+lines is frontmatter: settings for the diagram. `layout: circular`
+picks this layout.
+
+<details>
+<summary>Diagram text</summary>
+
+```
+---
+config:
+  layout: circular
+---
+flowchart LR
+  P[Plan] --> B[Build] --> T[Test] --> S[Ship] --> L[Learn] --> P
+  B -.->|skip tests| S
+  I[Idea] --> P
+  T --> D[Debug] --> F[Fix] --> R[Retest] --> D
+```
+
+</details>
+
+## Which package to use
+
+The same circular layout comes in four packages. Pick the one that
+matches how you draw diagrams.
+
+| You draw diagrams with | Use |
+| --- | --- |
+| mermaid, in a web page or app | [mermaid-layout-circular](https://github.com/AndrewBroz/mermaid-layout-circular) |
+| Pele, in a web page or app | [pele-layout-circular](https://github.com/AndrewBroz/pele-layout-circular) |
+| Obsidian, in your notes | [obsidian-mermaid-circular](https://github.com/AndrewBroz/obsidian-mermaid-circular), a plugin |
+| your own code | this package |
+
+The first three use layout-circular to decide where each node goes.
+They place nodes the same way. They differ in how boxes and text are drawn.
+
+## Install
+
+```sh
+npm install layout-circular
+```
+
+Renderer packages compile it into their own bundle, so their users
+never install it. A host project may also copy `src/` into its own
+tree, with the license notice.
 
 ## Usage
 
@@ -37,129 +99,173 @@ const { nodes, edges } = circularLayout(
 );
 ```
 
-Each placed node has a center `x`, `y` and its `angle` on the circle.
-Each edge has `points`, a sampled path that starts and ends exactly on
-the node outlines. Draw the paths as given. Trimming them to node
-boundaries again moves the arrowheads off the curve.
+You pass each node's size, and each edge's two ends. Each placed node
+comes back with a center `x`, `y` and its `angle` on the circle. Each
+edge comes back with `points`, a path that starts and ends exactly on
+the node outlines. Draw the paths as given. If you trim them to the
+node outlines again, the arrowheads move off the curve.
 
 ## Groups
 
-A node's `group` names the innermost group (subgraph) it belongs to.
-Members of one group sit side by side on their ring. Describe each
-group in the fourth argument: its padding, which is the room the
-renderer leaves between the wall and what it wraps (the top usually
-holds the title too), its title's measured size, and its parent, for
-nesting.
+A group is a set of nodes drawn inside one shape. In mermaid it is a
+subgraph. A node's `group` names the innermost group it belongs to.
+The layout seats the members of one group side by side on the ring.
+
+Describe each group in the fourth argument:
+
+- `padding`: the room your renderer leaves between the group's wall and
+  what it wraps, per side. The top usually holds the title too.
+- `title`: the measured size of the group's title.
+- `parent`: the group this one sits inside, for nesting.
 
 ```ts
 const { groups, groupsClear } = circularLayout(nodes, edges, {}, [
-  { id: 'Atmosphere', padding: { top: 36, right: 12, bottom: 12, left: 12 }, title: { width: 84, height: 20 } },
-  { id: 'Clouds', parent: 'Atmosphere', padding: { top: 36, right: 12, bottom: 12, left: 12 } },
+  {
+    id: 'Atmosphere',
+    padding: { top: 36, right: 12, bottom: 12, left: 12 },
+    title: { width: 84, height: 20 },
+  },
+  {
+    id: 'Clouds',
+    parent: 'Atmosphere',
+    padding: { top: 36, right: 12, bottom: 12, left: 12 },
+  },
 ]);
 ```
 
 Each group comes back as one of two shapes, told apart by `kind`:
 
-- A **box**: a center `x`, `y`, a `width` and a `height`. It hugs the
-  group's members and child boxes with exactly the padding given.
-- A **band**: a slice of the ring between `innerRadius` and
-  `outerRadius`, swept clockwise from `startAngle` to `endAngle`
-  around `center`. Draw it as an annular sector. A group is a band
-  when its first and last members' seats span half the ring or more,
-  and so is everything nested in it. A rectangle around that much of
-  a circle would cover the middle.
+- `kind: 'box'` is a rectangle. It has a center `x`, `y`, a `width` and
+  a `height`. `titleSide` says whether its title goes at the top or the
+  bottom.
+- `kind: 'band'` is a curved strip that follows the ring. It lies
+  between `innerRadius` and `outerRadius` around `center`, and runs
+  clockwise from `startAngle` to `endAngle`.
 
-Every shape has a `title` point. A box also has `titleSide`. Its
-title goes on top, unless a spoke, chord or spur crosses the top's
-title strip while the bottom's is clear: then the title room moves to
-the bottom. The title point is the middle of that room, at the spot
-along it nearest the middle that no edge crosses. A band's title
-reads horizontally, centered on its point: just outside the band, on
-the ray through its middle. A band nested in a band seats its title in
-the strip between the two. Edge labels slide off titles as they do off
-nodes. `groupBounds(shape)` gives any shape's bounding box.
+| `kind: 'box'` | `kind: 'band'` |
+| --- | --- |
+| <img src="docs/media/lifecycle-box.svg" width="291" alt="Eight boxes on a circle. Build and Test sit inside a gray box titled Make, at the bottom right."> | <img src="docs/media/lifecycle-band.svg" width="340" alt="The same eight boxes on a circle. A gray curved strip titled Funded wraps six of them, from Spec to Monitor."> |
 
-The layout keeps the circle whole to make room for the shapes. Gaps
-stay even, the radius stays one, and the ring stays mirror-symmetric.
-Instead it turns the ring, so another node takes the top, or the gap
-between two nodes does. It takes the least turn that clears within
-1.15 times the radius, then the least growth. Failing that, the least
-growth that clears within 1.5 times. A box that clears at no turn
-becomes a band. Shapes keep 8px clear of every node outside the group
-and of their sibling shapes. When nothing works, `groupsClear` is
-`false` and the shapes are still returned.
+A group becomes a band when it covers half the ring or more. A
+rectangle around that much of a circle would cover its middle.
 
-Known limits: a band sweeping nearly the whole ring stops short of a
-full turn, and its corners can meet what it would have wrapped; the
-flag says so. A nested band's title is not checked against other
-titles.
+Every shape has a `title` point, the center of its title.
+`groupBounds(shape)` gives any shape's bounding box. `groupsClear` is
+`false` when the layout could not keep every shape clear of the nodes
+outside it. The shapes still come back.
 
-Without the fourth argument, grouped nodes are only seated together,
-and the layout is the one they always had: no turn, no growth, and
-no `groups` in the result. A group named only by members has no
-padding. A layout without grouped nodes is unchanged either way.
+Without the fourth argument, the layout seats grouped nodes together
+and returns no shapes. How shapes are placed:
+[docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md#groups).
 
-The options and their defaults are `CircularLayoutOptions` and
-`defaults` in `src/layout.ts`: `spacing`, `startAngle`, `ordering`,
-`samples`, `tail`, `direction`, `hub`, `edges` and `parallelGap`. The
-visual trials behind the early defaults are recorded in
-mermaid-layout-circular's `docs/DECISIONS.md`, where the math was
-developed. The `bow` and `swerve` options were removed in 0.2.0,
-when chords became straight.
+<details>
+<summary>Diagram text</summary>
 
-## Rim edges
+```
+---
+config:
+  layout: circular
+---
+flowchart LR
+  I[Idea] --> S[Spec] --> D[Design]
+  subgraph Make
+    B[Build]
+    T[Test]
+  end
+  D --> B --> T --> P[Deploy] --> M[Monitor] --> R[Retire] --> I
+```
 
-The `edges` option picks the shape of rim edges, the edges between ring
-neighbors. The default, `'arc'`, draws each as an arc of the ring.
-`'straight'` draws each as a straight segment from border to border:
+```
+---
+config:
+  layout: circular
+---
+flowchart LR
+  I[Idea]
+  subgraph Funded
+    S[Spec]
+    D[Design]
+    B[Build]
+    T[Test]
+    P[Deploy]
+    M[Monitor]
+  end
+  I --> S --> D --> B --> T --> P --> M --> R[Retire] --> I
+```
+
+</details>
+
+## Edge shapes
+
+The `edges` option sets how the arrows between ring neighbors are
+drawn. The default, `'arc'`, draws each one along the circle.
+`'straight'` draws each one as a straight line, so the ring reads as a
+polygon.
 
 ```ts
 circularLayout(nodes, edges, { edges: 'straight' });
 ```
 
-A three-cycle then reads as a triangle, and every ring, satellites
-included, as a polygon. Placement is the same either way. So are hub
-spokes, spurs and self-loops.
+| `edges: 'arc'` (the default) | `edges: 'straight'` |
+| --- | --- |
+| <img src="docs/media/daily-arcs.svg" width="259" alt="Five boxes on a circle joined by curved labelled arrows, with a dashed straight line from Work to Home."> | <img src="docs/media/daily-straight.svg" width="259" alt="The same five boxes joined by straight labelled arrows into a pentagon, with the same dashed line from Work to Home."> |
 
-Chords are straight in both modes. The rim edges carry the cycle, and
-a chord is a shortcut across it. A chord runs border to border on the
-line between the two centers.
+The nodes sit in the same places either way. Chords are always
+straight, in both modes.
 
-Two opposite straight edges between one pair become two parallel
-lines a few pixels apart, and so does a fan of three or more. That
-holds for every chord, and for rim edges with `'straight'`. A label
-sits at its segment's midpoint, and a rim label slides outward when
-it crowds the boxes beside it. The labels of parallel lines step off
-sideways, each beside its own line and clear of its siblings' labels.
+Two edges between the same two nodes, one each way, become two
+parallel lines. The `parallelGap` option sets the distance between
+them. Its default of 10 pixels clears mermaid's 8 pixel arrowhead.
 
-The `parallelGap` option sets the distance between parallel lines, in
-pixels. Its default, 10, is sized for mermaid's 8px point marker. A
-renderer with smaller arrowheads can pass less.
+<details>
+<summary>Diagram text</summary>
 
-Known limits:
+```
+---
+config:
+  layout: circular
+---
+flowchart LR
+  W[Wake] -->|coffee| Wk[Work]
+  Wk -->|lunch| M[Meetings]
+  M -->|escape| F[Focus]
+  F -->|dusk| Hm[Home]
+  Hm -->|sleep| W
+  Wk -.->|skip the day| Hm
+```
 
-- A chord across a ring with a hub runs straight through the hub, in
-  both modes. Its label slides off the hub, across the line.
-- In a fan of three or more, the middle line's label stays on its
-  line, so the label's background covers the lines beside it.
+The straight version adds `curve: linear` under `config`. mermaid and
+Pele turn that into `edges: 'straight'`:
 
-## Bundling, not depending
+```
+---
+config:
+  layout: circular
+  flowchart:
+    curve: linear
+---
+```
 
-Renderer packages compile this package into their own bundle at build
-time. They don't list it as a runtime dependency. A host project can go
-further and copy `src/` into its own tree, with the license notice, the
-way mermaid took in a layered layout engine from Pele. `src/` imports
-only from itself, and lint enforces that.
+</details>
+
+## Options
+
+The third argument takes options such as `spacing`, `direction` and
+`hub`. Each one, with its default, is in
+[docs/OPTIONS.md](docs/OPTIONS.md).
 
 ## Development
 
-Three gates, all green before committing:
+Three checks must pass before each commit:
 
 ```sh
 npm test        # vitest, the placement math
 npm run lint    # eslint, then tsc with no DOM types
 npm run build   # vite library build plus type declarations
 ```
+
+Design decisions, with their dates and reasons, are in
+[docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## License
 
