@@ -106,6 +106,8 @@ It keeps the ring as it is: equal gaps, one radius, and symmetry. It
 never widens one gap to make room. Instead it makes room in three ways:
 
 1. Each box hugs its members, with the padding your renderer gave.
+   It also holds the arrows between its members. An arc between two
+   members can curve out past both of them, and the box holds it.
 2. The ring may turn. Any node, or the gap between two nodes, may take
    the top. The ring stays symmetric either way. A group then often
    sits level, where a rectangle fits it snugly.
