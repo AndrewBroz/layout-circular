@@ -105,6 +105,20 @@ export interface CircularLayoutOptions {
    *  wheel's axle — and rings everything else around it. 'none' keeps
    *  every node on the ring; a node id names the hub explicitly. */
   hub?: 'auto' | 'none' | (string & {});
+  /** The shape of edges between ring nodes. 'arc' (the default) draws
+   *  each neighbor edge as an arc of the ring and bows chords toward
+   *  the center. 'straight' draws both as straight segments from
+   *  border to border, so a three-cycle reads as a triangle and every
+   *  ring, satellites included, as a polygon. Placement, spokes,
+   *  spurs and self-loops are the same either way. */
+  edges?: 'arc' | 'straight';
+  /** Pixels between parallel straight edges that share both ends,
+   *  such as an opposite pair, with `edges: 'straight'`. Each line's
+   *  arrowhead must clear its sibling, so the gap should be at least
+   *  the head's half-width, plus half the stroke, plus a little
+   *  daylight. Arrowheads keep their size whatever the nodes' size,
+   *  so the gap does not scale with the nodes. */
+  parallelGap?: number;
 }
 
 export interface SatelliteRing {
@@ -146,6 +160,10 @@ const defaults = {
   tail: 10,
   direction: 'clockwise' as const,
   hub: 'auto' as const,
+  edges: 'arc' as const,
+  // Sized for mermaid's 8px point marker, whose head overruns a
+  // narrower gap. A renderer with smaller heads can pass less.
+  parallelGap: 10,
 };
 
 /**
@@ -507,6 +525,44 @@ const throughBorders = (points: Point[], from: BoxAt, to: BoxAt, tail: number): 
 const unit = (v: Point): Point => {
   const len = Math.hypot(v.x, v.y) || 1;
   return { x: v.x / len, y: v.y / len };
+};
+
+/**
+ * A straight edge between two ring nodes: the line from center to
+ * center, cut where it leaves one silhouette and enters the other.
+ * Siblings slide sideways onto parallel lines, `gap` apart,
+ * in the frame of the sorted pair — as for spurs, an opposite pair's
+ * own perpendiculars would cancel. The fan is scaled down when it
+ * would not fit through both silhouettes. The path keeps a straight
+ * point `tail` in from each end and puts its middle sample on the
+ * segment's midpoint, where the label goes.
+ */
+const straightBetween = (
+  from: BoxAt,
+  to: BoxAt,
+  sortedForward: boolean,
+  spread: number,
+  siblings: number,
+  gap: number,
+  tail: number
+): Point[] => {
+  const maxOffset =
+    0.6 * Math.min(from.width / 2, from.height / 2, to.width / 2, to.height / 2);
+  const widestSpread = ((siblings - 1) / 2) * gap;
+  const fanScale = widestSpread > maxOffset ? maxOffset / widestSpread : 1;
+  const across = unit({ x: to.y - from.y, y: -(to.x - from.x) });
+  const offset = spread * gap * fanScale * (sortedForward ? 1 : -1);
+  const a = { x: from.x + across.x * offset, y: from.y + across.y * offset };
+  const b = { x: to.x + across.x * offset, y: to.y + across.y * offset };
+  const start = borderCrossing(a, b, from);
+  const end = borderCrossing(b, a, to);
+  const along = { x: end.x - start.x, y: end.y - start.y };
+  const length = Math.hypot(along.x, along.y);
+  const at = (t: number): Point => ({ x: start.x + along.x * t, y: start.y + along.y * t });
+  if (length <= 2 * tail) {
+    return [start, at(0.5), end];
+  }
+  return [start, at(tail / length), at(0.5), at(1 - tail / length), end];
 };
 
 /** Samples for a curve of the given approximate length: ~10px
@@ -1521,13 +1577,14 @@ const layoutRing = (
 
   // Edges sharing a pair of ends must separate, or two arrows draw
   // as one line. Rim pairs split radially; chord pairs split by bow
-  // depth; spur pairs bow apart sideways. At two rim nodes the key is
-  // the directed pair, because the diameter tie already mirrors
-  // opposite directions onto opposite sides.
+  // depth; spur pairs bow apart sideways; straight pairs split into
+  // parallel lines. At two rim nodes the arcs key on the directed
+  // pair, because the diameter tie already mirrors opposite
+  // directions onto opposite sides. A straight line has no such tie.
   const pairIndex = new Map<string, number>();
   const pairCount = new Map<string, number>();
   const pairKeyOf = (e: LayoutEdgeInput) =>
-    nRim === 2 ? `${e.start}>${e.end}` : pairKey(e.start, e.end);
+    nRim === 2 && opts.edges !== 'straight' ? `${e.start}>${e.end}` : pairKey(e.start, e.end);
   for (const e of edges) {
     pairCount.set(pairKeyOf(e), (pairCount.get(pairKeyOf(e)) ?? 0) + 1);
   }
@@ -1597,6 +1654,22 @@ const layoutRing = (
     const b = angleOf.get(e.end)!;
     const neighbors =
       ringSteps(position.get(e.start)!, position.get(e.end)!, nRim) === 1 || nRim === 2;
+
+    if (opts.edges === 'straight') {
+      return {
+        ...e,
+        points: straightBetween(
+          boxAt(e.start),
+          boxAt(e.end),
+          e.start < e.end,
+          spread,
+          siblings,
+          opts.parallelGap,
+          tail
+        ),
+        onRim: neighbors,
+      };
+    }
 
     if (neighbors) {
       // One circle, drawn honestly: the edge is a true arc of the
