@@ -112,6 +112,13 @@ export interface CircularLayoutOptions {
    *  ring, satellites included, as a polygon. Placement, spokes,
    *  spurs and self-loops are the same either way. */
   edges?: 'arc' | 'straight';
+  /** Pixels between parallel straight edges that share both ends,
+   *  such as an opposite pair, with `edges: 'straight'`. Each line's
+   *  arrowhead must clear its sibling, so the gap should be at least
+   *  the head's half-width, plus half the stroke, plus a little
+   *  daylight. Arrowheads keep their size whatever the nodes' size,
+   *  so the gap does not scale with the nodes. */
+  parallelGap?: number;
 }
 
 export interface SatelliteRing {
@@ -154,6 +161,9 @@ const defaults = {
   direction: 'clockwise' as const,
   hub: 'auto' as const,
   edges: 'arc' as const,
+  // Sized for mermaid's 8px point marker, whose head overruns a
+  // narrower gap. A renderer with smaller heads can pass less.
+  parallelGap: 10,
 };
 
 /**
@@ -232,11 +242,6 @@ const pairKey = (a: string, b: string): string => [a, b].sort().join(' ');
 
 /** Pixels between concentric sibling arcs that share both ends. */
 const SIBLING_STEP = 24;
-
-/** Pixels between parallel straight siblings that share both ends.
- *  Enough daylight that two 1–2px strokes read as two lines; close
- *  enough that the pair still reads as one connection. */
-const STRAIGHT_STEP = 6;
 
 /** Room a subgraph box's wall claims beyond its member's border. */
 const GROUP_PAD = 16;
@@ -525,7 +530,7 @@ const unit = (v: Point): Point => {
 /**
  * A straight edge between two ring nodes: the line from center to
  * center, cut where it leaves one silhouette and enters the other.
- * Siblings slide sideways onto parallel lines, STRAIGHT_STEP apart,
+ * Siblings slide sideways onto parallel lines, `gap` apart,
  * in the frame of the sorted pair — as for spurs, an opposite pair's
  * own perpendiculars would cancel. The fan is scaled down when it
  * would not fit through both silhouettes. The path keeps a straight
@@ -538,14 +543,15 @@ const straightBetween = (
   sortedForward: boolean,
   spread: number,
   siblings: number,
+  gap: number,
   tail: number
 ): Point[] => {
   const maxOffset =
     0.6 * Math.min(from.width / 2, from.height / 2, to.width / 2, to.height / 2);
-  const widestSpread = ((siblings - 1) / 2) * STRAIGHT_STEP;
+  const widestSpread = ((siblings - 1) / 2) * gap;
   const fanScale = widestSpread > maxOffset ? maxOffset / widestSpread : 1;
   const across = unit({ x: to.y - from.y, y: -(to.x - from.x) });
-  const offset = spread * STRAIGHT_STEP * fanScale * (sortedForward ? 1 : -1);
+  const offset = spread * gap * fanScale * (sortedForward ? 1 : -1);
   const a = { x: from.x + across.x * offset, y: from.y + across.y * offset };
   const b = { x: to.x + across.x * offset, y: to.y + across.y * offset };
   const start = borderCrossing(a, b, from);
@@ -1578,7 +1584,7 @@ const layoutRing = (
   const pairIndex = new Map<string, number>();
   const pairCount = new Map<string, number>();
   const pairKeyOf = (e: LayoutEdgeInput) =>
-    nRim === 2 && opts.edges === 'arc' ? `${e.start}>${e.end}` : pairKey(e.start, e.end);
+    nRim === 2 && opts.edges !== 'straight' ? `${e.start}>${e.end}` : pairKey(e.start, e.end);
   for (const e of edges) {
     pairCount.set(pairKeyOf(e), (pairCount.get(pairKeyOf(e)) ?? 0) + 1);
   }
@@ -1658,6 +1664,7 @@ const layoutRing = (
           e.start < e.end,
           spread,
           siblings,
+          opts.parallelGap,
           tail
         ),
         onRim: neighbors,

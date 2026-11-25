@@ -63,3 +63,13 @@ before the move are recorded in its `docs/DECISIONS.md`.
   the existing label placement seats a label there unchanged. With
   the default, the output is byte-identical to 0.1.1 on every call the
   existing tests make.
+- **2026-11-25 — The parallel gap is an option.** Review found the
+  6px `STRAIGHT_STEP` too tight. Each line of an opposite pair sat
+  3px off center, so mermaid's 8px point marker overran the sibling
+  line, and Pele's 8px head cleared it by about 1px. A gap needs the
+  head's half-width, half the stroke and about 2px of daylight. That
+  depends on the renderer's arrowheads, not on node size, so it
+  became the `parallelGap` option, the way `tail` is. The default, 10,
+  suits mermaid. Pele passes 8. An explicit `edges: undefined` means
+  arcs everywhere, including the two-node pair key. Exact snapshots of
+  four arc layouts now guard the default output in the tests.

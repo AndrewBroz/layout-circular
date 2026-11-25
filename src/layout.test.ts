@@ -1545,10 +1545,9 @@ describe('straight edges', () => {
       const hp = heading(p);
       const hq = heading(q);
       expect(hp.x * hq.x + hp.y * hq.y).toBeCloseTo(-1, 6);
-      // The gap between the two lines: a few pixels, not zero.
+      // The gap between the two lines: the default parallelGap.
       const gap = Math.abs((q[0]!.x - p[0]!.x) * -hp.y + (q[0]!.y - p[0]!.y) * hp.x);
-      expect(gap, `${there} vs ${back}`).toBeGreaterThan(3);
-      expect(gap, `${there} vs ${back}`).toBeLessThan(12);
+      expect(gap, `${there} vs ${back}`).toBeCloseTo(10, 6);
     }
   });
 
@@ -1563,7 +1562,79 @@ describe('straight edges', () => {
     expect(bend(q!)).toBeLessThan(1e-6);
     const hp = heading(p!);
     const gap = Math.abs((q![0]!.x - p![0]!.x) * -hp.y + (q![0]!.y - p![0]!.y) * hp.x);
-    expect(gap).toBeGreaterThan(3);
+    expect(gap).toBeCloseTo(10, 6);
+  });
+
+  /** Perpendicular distance between two parallel paths. */
+  const between = (p: { x: number; y: number }[], q: { x: number; y: number }[]) => {
+    const hp = heading(p);
+    return (q[0]!.x - p[0]!.x) * -hp.y + (q[0]!.y - p[0]!.y) * hp.x;
+  };
+
+  it('widens the gap between parallel lines as parallelGap asks', () => {
+    const pair = [edge('A', 'B'), edge('B', 'A')];
+    for (const parallelGap of [4, 16]) {
+      const { edges } = circularLayout([box('A'), box('B')], pair, { ...straight, parallelGap });
+      expect(Math.abs(between(edges[0]!.points, edges[1]!.points)), `${parallelGap}`).toBeCloseTo(
+        parallelGap,
+        6
+      );
+    }
+  });
+
+  it('fans four same-way siblings onto evenly spaced lines that still fit the boxes', () => {
+    // Four lines at the default 10px would span 30px; the 80×40 boxes
+    // take a fan of 2·0.6·20 = 24px, so the fan is scaled to fit.
+    const four = [1, 2, 3, 4].map((k) => ({ id: `AB${k}`, start: 'A', end: 'B' }));
+    const { edges, nodes } = circularLayout(
+      ['A', 'B', 'C'].map((id) => box(id)),
+      [...four, edge('B', 'C'), edge('C', 'A')],
+      straight
+    );
+    const byId = byIdOf(nodes);
+    const lines = four.map((f) => edges.find((e) => e.id === f.id)!.points);
+    const offsets = lines.map((l) => between(lines[0]!, l));
+    for (const [k, l] of lines.entries()) {
+      expect(bend(l), `line ${k}`).toBeLessThan(1e-6);
+      expect(onBoxBorder(l[0]!, byId.get('A')!), `line ${k} start`).toBe(true);
+      expect(onBoxBorder(l.at(-1)!, byId.get('B')!), `line ${k} end`).toBe(true);
+      if (k > 0) {
+        expect(Math.abs(offsets[k]! - offsets[k - 1]!), `step ${k}`).toBeCloseTo(8, 6);
+      }
+    }
+  });
+
+  it('ends straight edges on the true outlines of ellipses, diamonds and stadiums', () => {
+    const shaped: LayoutNodeInput[] = [
+      { id: 'E', width: 90, height: 50, shape: 'ellipse' },
+      { id: 'D', width: 80, height: 60, shape: 'diamond' },
+      { id: 'S', width: 120, height: 40, shape: 'stadium' },
+    ];
+    const { edges, nodes } = circularLayout(shaped, cycle('E', 'D', 'S'), straight);
+    const byId = byIdOf(nodes);
+    const size = new Map(shaped.map((n) => [n.id, n]));
+    /** 1 on the outline, below 1 inside, above 1 outside. */
+    const level = (p: { x: number; y: number }, id: string): number => {
+      const n = size.get(id)!;
+      const c = byId.get(id)!;
+      const dx = Math.abs(p.x - c.x);
+      const dy = Math.abs(p.y - c.y);
+      const [hw, hh] = [n.width / 2, n.height / 2];
+      if (n.shape === 'ellipse') return Math.hypot(dx / hw, dy / hh);
+      if (n.shape === 'diamond') return dx / hw + dy / hh;
+      return Math.hypot(Math.max(0, dx - (hw - hh)), dy) / hh;
+    };
+    for (const e of edges) {
+      expect(bend(e.points), e.id).toBeLessThan(1e-6);
+      expect(level(e.points[0]!, e.start), `${e.id} start`).toBeCloseTo(1, 4);
+      expect(level(e.points.at(-1)!, e.end), `${e.id} end`).toBeCloseTo(1, 4);
+    }
+  });
+
+  it('treats an explicitly undefined edges option as the arcs', () => {
+    const nodes = [box('A'), box('B')];
+    const pair = [edge('A', 'B'), edge('B', 'A')];
+    expect(circularLayout(nodes, pair, { edges: undefined })).toEqual(circularLayout(nodes, pair));
   });
 
   it('leaves placement, spokes, spurs and self-loops exactly as the arcs have them', () => {
@@ -1675,4 +1746,39 @@ describe('straight edges', () => {
     const rim = plain.edges.find((e) => e.id === 'A-B')!;
     expect(bend(rim.points)).toBeGreaterThan(1);
   });
+});
+
+describe('arc output guard', () => {
+  // Exact snapshots of a few default layouts, every float in full.
+  // They were written when the arcs matched 0.1.1 byte for byte, so
+  // any change to the arcs — meant or not — shows up here first.
+  const ring = ['A', 'B', 'C', 'D', 'E'];
+  type Options = Parameters<typeof circularLayout>[2];
+  const cases: [string, LayoutNodeInput[], LayoutEdgeInput[], Options?][] = [
+    [
+      'ring with a chord, an opposite pair, a spur, a self-loop and labels',
+      [...ring, 'S'].map((id) => box(id)),
+      [
+        { ...edge('A', 'B'), labelWidth: 40, labelHeight: 18 },
+        ...cycle(...ring).slice(1),
+        edge('A', 'C'),
+        edge('C', 'A'),
+        edge('B', 'S'),
+        edge('D', 'D'),
+      ],
+    ],
+    ['wheel', [...ring, 'H'].map((id) => box(id)), [...cycle(...ring), ...ring.map((id) => edge(id, 'H'))]],
+    [
+      'satellite, counter-clockwise',
+      [...ring, 'X', 'Y', 'Z'].map((id) => box(id)),
+      [...cycle(...ring), edge('C', 'X'), ...cycle('X', 'Y', 'Z')],
+      { direction: 'counterclockwise' },
+    ],
+    ['two nodes, both ways', [box('A'), box('B')], [edge('A', 'B'), edge('B', 'A')]],
+  ];
+  for (const [name, nodes, edges, options] of cases) {
+    it(`keeps ${name} exactly as it was`, () => {
+      expect(circularLayout(nodes, edges, options)).toMatchSnapshot();
+    });
+  }
 });

@@ -63,6 +63,18 @@ parallel lines a few pixels apart. Placement is the same either way.
 So are hub spokes, spurs and self-loops. A label sits at its segment's
 midpoint, and slides outward when it crowds the boxes beside it.
 
+The `parallelGap` option sets the distance between parallel lines, in
+pixels. Its default, 10, is sized for mermaid's 8px point marker. A
+renderer with smaller arrowheads can pass less.
+
+Known limits:
+
+- A straight chord across a ring with a hub runs through the hub.
+  Arcs swerve around the center; straight lines don't.
+- When both edges of an opposite pair carry labels, the two labels sit
+  at nearly the same midpoint, only `parallelGap` apart, and can
+  overlap.
+
 ## Bundling, not depending
 
 Renderer packages compile this package into their own bundle at build
