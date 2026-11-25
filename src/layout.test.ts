@@ -2091,10 +2091,23 @@ describe('straight labels on parallel edges', () => {
   });
 });
 
+/** A value with every number rounded to six decimals, and -0 as 0. */
+const settled = (value: unknown): unknown =>
+  typeof value === 'number'
+    ? Number(value.toFixed(6)) || 0
+    : Array.isArray(value)
+      ? value.map(settled)
+      : value !== null && typeof value === 'object'
+        ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, settled(v)]))
+        : value;
+
 describe('arc output guard', () => {
-  // Exact snapshots of a few default layouts, every float in full.
-  // They were written when the arcs matched 0.1.1 byte for byte, so
-  // any change to the arcs — meant or not — shows up here first.
+  // Snapshots of a few default layouts. They were written when the arcs
+  // matched 0.1.1 byte for byte, so any change to the arcs — meant or
+  // not — shows up here first. Floats are rounded to six decimals: the
+  // trigonometry differs in the last bits between Node versions and
+  // platforms, and a guard must hold in CI as well as locally. Six
+  // decimals of a pixel still catch any real change.
   // The first case's chords were rewritten on purpose when chords
   // became straight; its rim arcs, spur and petal were not.
   const ring = ['A', 'B', 'C', 'D', 'E'];
@@ -2128,7 +2141,7 @@ describe('arc output guard', () => {
   ];
   for (const [name, nodes, edges, options] of cases) {
     it(`keeps ${name} exactly as it was`, () => {
-      expect(circularLayout(nodes, edges, options)).toMatchSnapshot();
+      expect(settled(circularLayout(nodes, edges, options))).toMatchSnapshot();
     });
   }
 });
