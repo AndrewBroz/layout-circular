@@ -97,3 +97,21 @@ before the move are recorded in its `docs/DECISIONS.md`.
   and big labels, the inner label may still touch the hub. The three
   copies of the slide loop became one `slideClear` helper. The arc
   labels keep their own scale arithmetic, so they stay byte-identical.
+- **2026-11-25 — Chords are always straight.** The owner decided that
+  a chord, an edge between ring nodes that aren't neighbors, is a
+  straight line whatever `edges` says. The rim edges carry the cycle,
+  and a chord is a shortcut across it. So `edges` now picks the shape of rim edges only. A chord takes the straight
+  path in both modes, through the same `straightBetween` as before:
+  border to border on the center line, cut at the true outlines, with
+  straight tails. Opposite chord pairs and fans become parallel lines
+  `parallelGap` apart, and their labels step aside as straight mode's
+  already did. The `bow` and `swerve` options are removed, not kept
+  as opt-in, at the owner's choice. This supersedes the trial
+  verdicts on chord bow (inward 0.35) and swerve (0.2), recorded in
+  mermaid-layout-circular's `docs/DECISIONS.md`. The cost is the one
+  swerve was for: a chord across a hub now runs through it in both
+  modes, and its label sits on the hub. Arc output changes for chords
+  only. Rim arcs, spurs, spokes, petals and satellites are
+  byte-identical, which a comparison of every call the tests make
+  against the previous main confirmed. Straight mode is unchanged. Removing two
+  options is a breaking change, so the next release is 0.2.0.

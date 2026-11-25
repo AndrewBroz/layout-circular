@@ -1,8 +1,9 @@
 # layout-circular
 
 A circular graph layout. Nodes sit at equal angles on one circle, and
-an edge between neighbors is an arc of that same circle. Chords bow
-toward the center. A clear hub moves to the center, side branches hang
+an edge between neighbors is an arc of that same circle. A chord, an
+edge between ring nodes that aren't neighbors, is a straight line
+across the ring. A clear hub moves to the center, side branches hang
 off radially, and a cycle hanging off the ring becomes its own smaller
 circle.
 
@@ -42,28 +43,37 @@ the node outlines. Draw the paths as given. Trimming them to node
 boundaries again moves the arrowheads off the curve.
 
 The options and their defaults are `CircularLayoutOptions` and
-`defaults` in `src/layout.ts`. The visual trials behind each default
-are recorded in mermaid-layout-circular's `docs/DECISIONS.md`, where
-the math was developed.
+`defaults` in `src/layout.ts`: `spacing`, `startAngle`, `ordering`,
+`samples`, `tail`, `direction`, `hub`, `edges` and `parallelGap`. The
+visual trials behind the early defaults are recorded in
+mermaid-layout-circular's `docs/DECISIONS.md`, where the math was
+developed. The `bow` and `swerve` options were removed in 0.2.0,
+when chords became straight.
 
-## Straight edges
+## Rim edges
 
-The `edges` option picks the shape of edges between ring nodes. The
-default, `'arc'`, draws a neighbor edge as an arc of the ring and bows
-chords toward the center. `'straight'` draws both as straight segments
-from border to border:
+The `edges` option picks the shape of rim edges, the edges between ring
+neighbors. The default, `'arc'`, draws each as an arc of the ring.
+`'straight'` draws each as a straight segment from border to border:
 
 ```ts
 circularLayout(nodes, edges, { edges: 'straight' });
 ```
 
 A three-cycle then reads as a triangle, and every ring, satellites
-included, as a polygon. Two opposite edges between one pair become two
-parallel lines a few pixels apart. Placement is the same either way.
-So are hub spokes, spurs and self-loops. A label sits at its segment's
-midpoint, and slides outward when it crowds the boxes beside it. The
-labels of parallel lines step off sideways, each beside its own line
-and clear of its siblings' labels.
+included, as a polygon. Placement is the same either way. So are hub
+spokes, spurs and self-loops.
+
+Chords are straight in both modes. The rim edges carry the cycle, and
+a chord is a shortcut across it. A chord runs border to border on the
+line between the two centers.
+
+Two opposite straight edges between one pair become two parallel
+lines a few pixels apart, and so does a fan of three or more. That
+holds for every chord, and for rim edges with `'straight'`. A label
+sits at its segment's midpoint, and a rim label slides outward when
+it crowds the boxes beside it. The labels of parallel lines step off
+sideways, each beside its own line and clear of its siblings' labels.
 
 The `parallelGap` option sets the distance between parallel lines, in
 pixels. Its default, 10, is sized for mermaid's 8px point marker. A
@@ -71,8 +81,8 @@ renderer with smaller arrowheads can pass less.
 
 Known limits:
 
-- A straight chord across a ring with a hub runs through the hub.
-  Arcs swerve around the center; straight lines don't.
+- A chord across a ring with a hub runs straight through the hub, in
+  both modes, and its label sits on the hub.
 - In a fan of three or more, the middle line's label stays on its
   line, so the label's background covers the lines beside it.
 

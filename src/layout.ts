@@ -10,7 +10,9 @@
  * so R is the maximum of that requirement over all pairs.
  *
  * A neighbor edge is a true arc of that same circle, so the eye reads
- * one ring, not n separate curves. Every path is sampled center to
+ * one ring, not n separate curves. A chord, between ring nodes that
+ * are not neighbors, is a straight line across the ring: a shortcut,
+ * not part of the cycle. Every path is sampled center to
  * center, then trimmed to the exact silhouette crossings — bisected
  * on the curve itself, shape-aware — with a straight terminal
  * segment at each end (the `tail` option), so each arrowhead sits
@@ -79,13 +81,6 @@ export interface CircularLayoutOptions {
   /** 'follow-edges' walks the graph so cycle neighbors sit beside each
    *  other; 'input' keeps the author's order. */
   ordering?: 'follow-edges' | 'input';
-  /** How far a non-neighbor chord bows toward the center, 0..1.
-   *  0 is a straight line. */
-  bow?: number;
-  /** Sideways slide (fraction of the radius) for chords passing near
-   *  the center, so diameters braid around the hub instead of
-   *  stabbing through one point. 0 disables. */
-  swerve?: number;
   /** Points sampled per edge path. */
   samples?: number;
   /** Length of the straight segment each path keeps before its ends,
@@ -105,16 +100,18 @@ export interface CircularLayoutOptions {
    *  wheel's axle — and rings everything else around it. 'none' keeps
    *  every node on the ring; a node id names the hub explicitly. */
   hub?: 'auto' | 'none' | (string & {});
-  /** The shape of edges between ring nodes. 'arc' (the default) draws
-   *  each neighbor edge as an arc of the ring and bows chords toward
-   *  the center. 'straight' draws both as straight segments from
-   *  border to border, so a three-cycle reads as a triangle and every
-   *  ring, satellites included, as a polygon. Placement, spokes,
-   *  spurs and self-loops are the same either way. */
+  /** The shape of rim edges, those between ring neighbors. 'arc'
+   *  (the default) draws each as an arc of the ring. 'straight' draws
+   *  each as a straight segment from border to border, so a
+   *  three-cycle reads as a triangle and every ring, satellites
+   *  included, as a polygon. Chords, between ring nodes that are not
+   *  neighbors, are straight either way. Placement, spokes, spurs and
+   *  self-loops are the same either way. */
   edges?: 'arc' | 'straight';
-  /** Pixels between parallel straight edges that share both ends,
-   *  such as an opposite pair, with `edges: 'straight'`. Each line's
-   *  arrowhead must clear its sibling, so the gap should be at least
+  /** Pixels between parallel straight edges that share both ends:
+   *  an opposite chord pair, or a rim pair with `edges: 'straight'`.
+   *  Each line's arrowhead must clear its sibling, so the gap should
+   *  be at least
    *  the head's half-width, plus half the stroke, plus a little
    *  daylight. Arrowheads keep their size whatever the nodes' size,
    *  so the gap does not scale with the nodes. */
@@ -152,8 +149,6 @@ const defaults = {
   spacing: 40,
   startAngle: -Math.PI / 2,
   ordering: 'follow-edges' as const,
-  bow: 0.35,
-  swerve: 0.2,
   samples: 24,
   // Outreaches mermaid's marker handling, which moves points within
   // about 5px of a path's end.
@@ -925,10 +920,10 @@ export const circularLayout = (
       { ...ringOptions, startAngle: Math.PI - ringOptions.startAngle },
       undefined
     );
-    return withLabels(mirrored(solved), nodes, edges, ringOptions.edges);
+    return withLabels(mirrored(solved), nodes, edges);
   }
   const clockwise = layoutRing(nodes, edges, ringOptions, undefined);
-  return withLabels(clockwise, nodes, edges, ringOptions.edges);
+  return withLabels(clockwise, nodes, edges);
 };
 
 /** Daylight between a parallel edge's label and the line it clears,
@@ -961,21 +956,20 @@ const isStraight = (points: Point[]): boolean => {
  * that fits inline with modest breathing room stays inline, since a
  * home inside the gap beats an airier one outside the ring. Only when
  * even the modest fit fails does it slide, and then it clears
- * generously. A chord's label lives in the middle, which the swerve
- * already keeps clear. Straight parallel lines get their own pass,
- * `withParallelLabels`, since their middles sit only a gap apart.
+ * generously. A chord's label sits at the chord's midpoint, even on a
+ * hub there, a known limit. Parallel straight lines, such as an opposite chord
+ * pair, get their own pass, `withParallelLabels`, since their middles
+ * sit only a gap apart.
  */
 const withLabels = (
   result: CircularLayoutResult,
   nodes: LayoutNodeInput[],
-  edges: LayoutEdgeInput[],
-  edgeMode: 'arc' | 'straight' = 'arc'
+  edges: LayoutEdgeInput[]
 ): CircularLayoutResult => {
   const size = new Map(nodes.map((n) => [n.id, n]));
   const placed = result.nodes.map((p) => ({ x: p.x, y: p.y, n: size.get(p.id)! }));
   const labelOf = new Map(edges.map((e) => [e.id, e]));
-  const parallel =
-    edgeMode === 'straight' ? parallelGroups(result, labelOf) : new Map<string, RoutedEdge[]>();
+  const parallel = parallelGroups(result, labelOf);
   const grouped = new Set([...parallel.values()].flat());
   for (const edge of result.edges) {
     const input = labelOf.get(edge.id);
@@ -1206,7 +1200,7 @@ const layoutRing = (
    *  through unchanged. */
   reversed = false
 ): CircularLayoutResult => {
-  const { spacing, startAngle, ordering, bow, swerve, samples, tail, hub } = opts;
+  const { spacing, startAngle, ordering, samples, tail, hub } = opts;
   // The gap between a node and what hangs off it radially: 80% of
   // the rim spacing.
   const spurGap = spacing * 0.8;
@@ -1786,9 +1780,9 @@ const layoutRing = (
   const position = new Map(order.map((id, i) => [id, i]));
 
   // Edges sharing a pair of ends must separate, or two arrows draw
-  // as one line. Rim pairs split radially; chord pairs split by bow
-  // depth; spur pairs bow apart sideways; straight pairs split into
-  // parallel lines. At two rim nodes the arcs key on the directed
+  // as one line. Arc rim pairs split radially; spur pairs bow apart
+  // sideways; straight pairs, chords among them, split into parallel
+  // lines. At two rim nodes the arcs key on the directed
   // pair, because the diameter tie already mirrors opposite
   // directions onto opposite sides. A straight line has no such tie.
   const pairIndex = new Map<string, number>();
@@ -1865,7 +1859,9 @@ const layoutRing = (
     const neighbors =
       ringSteps(position.get(e.start)!, position.get(e.end)!, nRim) === 1 || nRim === 2;
 
-    if (opts.edges === 'straight') {
+    // A chord is straight in both modes: it is a shortcut across the
+    // ring, not part of the cycle the arcs draw.
+    if (opts.edges === 'straight' || !neighbors) {
       return {
         ...e,
         points: straightBetween(
@@ -1881,68 +1877,37 @@ const layoutRing = (
       };
     }
 
-    if (neighbors) {
-      // One circle, drawn honestly: the edge is a true arc of the
-      // rim, sampled from seat angle to seat angle — both seats lie
-      // on the rim, so the path runs center to center and the
-      // renderer replaces each center with the exact border crossing.
-      // A sibling pair (opposite or parallel arrows) rides concentric
-      // arcs — the offset clamped so the offset circle still passes
-      // through both silhouettes.
-      const boxA = boxAt(e.start);
-      const boxB = boxAt(e.end);
-      const maxOffset =
-        0.6 * Math.min(boxA.width / 2, boxA.height / 2, boxB.width / 2, boxB.height / 2);
-      // Scale the whole fan uniformly rather than clamping each
-      // offset: clamping saturates, and saturated siblings coincide.
-      const widestSpread = ((siblings - 1) / 2) * SIBLING_STEP;
-      const fanScale = widestSpread > maxOffset ? maxOffset / widestSpread : 1;
-      const offset = spread * SIBLING_STEP * fanScale;
-      const arcRadius = radius + offset;
-      // The target's angle expressed continuously from `a` — walking
-      // back from its stored angle can sit across the ±π wrap and
-      // send the arc the long way round the circle.
-      const delta = shortWay(a, b);
-      const arcLength = Math.abs(delta) * arcRadius;
-      // Denser than the free-curve samplers: the arc's ends feed the
-      // renderer its border directions, and a fine step keeps those
-      // directions honest tangents.
-      const count = Math.max(8, Math.min(4 * samples, Math.round(arcLength / 8)));
-      const arc: Point[] = [];
-      for (let i = 0; i <= count; i++) {
-        arc.push(onCircle(arcRadius, a + (delta * i) / count));
-      }
-      return { ...e, points: throughBorders(arc, boxA, boxB, tail), onRim: true };
+    // One circle, drawn honestly: the edge is a true arc of the
+    // rim, sampled from seat angle to seat angle — both seats lie
+    // on the rim, so the path runs center to center and the
+    // renderer replaces each center with the exact border crossing.
+    // A sibling pair (opposite or parallel arrows) rides concentric
+    // arcs — the offset clamped so the offset circle still passes
+    // through both silhouettes.
+    const boxA = boxAt(e.start);
+    const boxB = boxAt(e.end);
+    const maxOffset =
+      0.6 * Math.min(boxA.width / 2, boxA.height / 2, boxB.width / 2, boxB.height / 2);
+    // Scale the whole fan uniformly rather than clamping each
+    // offset: clamping saturates, and saturated siblings coincide.
+    const widestSpread = ((siblings - 1) / 2) * SIBLING_STEP;
+    const fanScale = widestSpread > maxOffset ? maxOffset / widestSpread : 1;
+    const offset = spread * SIBLING_STEP * fanScale;
+    const arcRadius = radius + offset;
+    // The target's angle expressed continuously from `a` — walking
+    // back from its stored angle can sit across the ±π wrap and
+    // send the arc the long way round the circle.
+    const delta = shortWay(a, b);
+    const arcLength = Math.abs(delta) * arcRadius;
+    // Denser than the free-curve samplers: the arc's ends feed the
+    // renderer its border directions, and a fine step keeps those
+    // directions honest tangents.
+    const count = Math.max(8, Math.min(4 * samples, Math.round(arcLength / 8)));
+    const arc: Point[] = [];
+    for (let i = 0; i <= count; i++) {
+      arc.push(onCircle(arcRadius, a + (delta * i) / count));
     }
-
-    // A chord: bowed toward the center, swerved left of travel by how
-    // near it passes the center, so diameters braid around the hub
-    // and opposite directions separate on their own.
-    const pa = onCircle(radius, a);
-    const pb = onCircle(radius, b);
-    const mid = { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 };
-    const chordLength = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-    const centrality = 1 - Math.min(1, Math.hypot(mid.x, mid.y) / radius);
-    const left =
-      chordLength === 0
-        ? { x: 0, y: 0 }
-        : { x: (pb.y - pa.y) / chordLength, y: -(pb.x - pa.x) / chordLength };
-    const slide = swerve * radius * centrality;
-    // Each further sibling bows 0.15 deeper toward the center.
-    const control = {
-      x: mid.x * (1 - (bow + spread * 0.15)) + left.x * slide,
-      y: mid.y * (1 - (bow + spread * 0.15)) + left.y * slide,
-    };
-    return {
-      ...e,
-      points: throughBorders(
-        bezier([pa, control, pb], samples),
-        boxAt(e.start),
-        boxAt(e.end),
-        tail
-      ),
-      onRim: false,
-    };
+    return { ...e, points: throughBorders(arc, boxA, boxB, tail), onRim: true };
   });
 
   return {
