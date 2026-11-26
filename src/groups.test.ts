@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { circularLayout, groupBounds, outlinePath } from './layout.js';
+import { circularLayout, groupBounds } from './layout.js';
 import type {
   CircularLayoutOptions,
   CircularLayoutResult,
@@ -190,33 +190,15 @@ const rectOf = (r: CircularLayoutResult, n: LayoutNodeInput, grow = 0): Rect => 
   };
 };
 
-/** Whether a band covers a point: inside its outline, even-odd. */
+/** Whether a band covers a point: within its radii and its sweep. */
 const inBand = (b: GroupBand, p: Point): boolean => {
-  let inside = false;
-  const o = b.outline;
-  for (let i = 0, j = o.length - 1; i < o.length; j = i++) {
-    const a = o[i]!;
-    const c = o[j]!;
-    if (a.y > p.y !== c.y > p.y && p.x < ((c.x - a.x) * (p.y - a.y)) / (c.y - a.y) + a.x) {
-      inside = !inside;
-    }
+  const rho = Math.hypot(p.x - b.center.x, p.y - b.center.y);
+  if (rho < b.innerRadius || rho > b.outerRadius) {
+    return false;
   }
-  return inside;
-};
-
-/** The distance from a point to a band's wall. */
-const toWall = (b: GroupBand, p: Point): number => {
-  let d = Infinity;
-  const o = b.outline;
-  for (let i = 0, j = o.length - 1; i < o.length; j = i++) {
-    const a = o[i]!;
-    const c = o[j]!;
-    const vx = c.x - a.x;
-    const vy = c.y - a.y;
-    const t = Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / (vx * vx + vy * vy || 1)));
-    d = Math.min(d, Math.hypot(p.x - a.x - t * vx, p.y - a.y - t * vy));
-  }
-  return d;
+  const phi = Math.atan2(p.y - b.center.y, p.x - b.center.x);
+  const into = (((phi - b.startAngle) % TAU) + TAU) % TAU;
+  return into <= b.endAngle - b.startAngle;
 };
 
 /** Whether a shape covers any point of a rect, sampled every 2px. */
@@ -483,64 +465,6 @@ describe('bands', () => {
     expectClear(r, c);
   });
 
-  it('keeps the padding from every member and every path between them', () => {
-    const c = hubCase();
-    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
-    const b = bandOf(r);
-    // The wall is traced every half degree and simplified to a quarter
-    // pixel, so it may come up to 1px inside the padding.
-    const pad = Math.max(tight.left, tight.right, tight.bottom) - 1;
-    const members = c.nodes.filter((n) => n.group === 'G');
-    for (const n of members) {
-      const m = rectOf(r, n);
-      for (let x = m.minX; x <= m.maxX; x += 2) {
-        for (const y of [m.minY, m.maxY]) {
-          expect(inBand(b, { x, y }), n.id).toBe(true);
-          expect(toWall(b, { x, y }), n.id).toBeGreaterThanOrEqual(pad);
-        }
-      }
-      for (let y = m.minY; y <= m.maxY; y += 2) {
-        for (const x of [m.minX, m.maxX]) {
-          expect(toWall(b, { x, y }), n.id).toBeGreaterThanOrEqual(pad);
-        }
-      }
-    }
-    const inside = new Set(members.map((n) => n.id));
-    for (const e of r.edges.filter((q) => inside.has(q.start) && inside.has(q.end))) {
-      for (const p of e.points) {
-        expect(inBand(b, p), e.id).toBe(true);
-        expect(toWall(b, p), e.id).toBeGreaterThanOrEqual(pad);
-      }
-    }
-  });
-
-  it('rounds each end member with exactly the padding', () => {
-    const c = hubCase();
-    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
-    const b = bandOf(r);
-    const pad = Math.max(tight.left, tight.right, tight.bottom);
-    const mid = (b.startAngle + b.endAngle) / 2;
-    const off = (p: Point) => Math.abs(Math.atan2(Math.sin(Math.atan2(p.y, p.x) - mid), Math.cos(Math.atan2(p.y, p.x) - mid)));
-    // A and D are the end members. Their two corners farthest round
-    // from the band's middle, and their two corners farthest from the
-    // center, under the outer wall, all sit one padding inside the
-    // wall, within the 1px the traced wall may stray.
-    for (const id of ['A', 'D']) {
-      const m = rectOf(r, c.nodes.find((n) => n.id === id)!);
-      const corners = [
-        { x: m.minX, y: m.minY },
-        { x: m.maxX, y: m.minY },
-        { x: m.minX, y: m.maxY },
-        { x: m.maxX, y: m.maxY },
-      ];
-      const roundEnd = [...corners].sort((p, q) => off(q) - off(p)).slice(0, 2);
-      const outer = [...corners].sort((p, q) => Math.hypot(q.x, q.y) - Math.hypot(p.x, p.y)).slice(0, 2);
-      for (const q of [...roundEnd, ...outer]) {
-        expect(Math.abs(toWall(b, q) - pad), id).toBeLessThan(1);
-      }
-    }
-  });
-
   it('follows the ring and leaves the hub, with no seat, outside', () => {
     const c = hubCase();
     const r = circularLayout(c.nodes, c.edges, {}, c.groups);
@@ -549,12 +473,6 @@ describe('bands', () => {
     expect(b.innerRadius).toBeLessThan(r.radius);
     expect(b.outerRadius).toBeGreaterThan(r.radius);
     expect(b.endAngle).toBeGreaterThan(b.startAngle);
-    // The radii and sweep bound the outline.
-    for (const p of b.outline) {
-      const rho = Math.hypot(p.x, p.y);
-      expect(rho).toBeGreaterThanOrEqual(b.innerRadius - 1e-6);
-      expect(rho).toBeLessThanOrEqual(b.outerRadius + 1e-6);
-    }
     for (const id of ['Hub', 'E', 'F']) {
       expect(covers(b, rectOf(r, c.nodes.find((n) => n.id === id)!, 4)), id).toBe(false);
     }
@@ -565,8 +483,7 @@ describe('bands', () => {
     const r = circularLayout(c.nodes, c.edges, {}, c.groups);
     const b = bandOf(r);
     const mid = (b.startAngle + b.endAngle) / 2;
-    // The middle ray is the traced ray nearest it, within a quarter degree.
-    expect(Math.abs(Math.atan2(b.title.y, b.title.x) - Math.atan2(Math.sin(mid), Math.cos(mid)))).toBeLessThan(0.005);
+    expect(Math.atan2(b.title.y, b.title.x)).toBeCloseTo(Math.atan2(Math.sin(mid), Math.cos(mid)), 6);
     const { width, height } = c.groups[0]!.title!;
     const title = {
       minX: b.title.x - width / 2,
@@ -575,16 +492,10 @@ describe('bands', () => {
       maxY: b.title.y + height / 2,
     };
     expect(covers(b, title)).toBe(false);
-    // Close to the band: its nearest corner within 12px of the wall.
-    const near = Math.min(
-      ...[
-        { x: title.minX, y: title.minY },
-        { x: title.maxX, y: title.minY },
-        { x: title.minX, y: title.maxY },
-        { x: title.maxX, y: title.maxY },
-      ].map((p) => toWall(b, p))
-    );
-    expect(near).toBeLessThan(12);
+    // Close to the band: its nearest point within 12px of the edge.
+    const nx = Math.min(Math.max(0, title.minX), title.maxX);
+    const ny = Math.min(Math.max(0, title.minY), title.maxY);
+    expect(Math.hypot(nx, ny) - b.outerRadius).toBeLessThan(12);
   });
 
   it('keeps the title room the top padding leaves, when no title size is given', () => {
@@ -598,11 +509,10 @@ describe('bands', () => {
     const cw = bandOf(circularLayout(c.nodes, c.edges, {}, c.groups));
     const ccw = bandOf(circularLayout(c.nodes, c.edges, { direction: 'counterclockwise' }, c.groups));
     const norm = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
-    // Within the half-degree step the wall is traced at.
-    expect(Math.abs(norm(ccw.startAngle - (Math.PI - cw.endAngle)))).toBeLessThan(TAU / 720 + 1e-9);
+    expect(norm(ccw.startAngle)).toBeCloseTo(norm(Math.PI - cw.endAngle), 6);
     expect(ccw.endAngle - ccw.startAngle).toBeCloseTo(cw.endAngle - cw.startAngle, 6);
-    expect(ccw.title.x).toBeCloseTo(-cw.title.x, 0);
-    expect(ccw.title.y).toBeCloseTo(cw.title.y, 0);
+    expect(ccw.title.x).toBeCloseTo(-cw.title.x, 6);
+    expect(ccw.title.y).toBeCloseTo(cw.title.y, 6);
   });
 
   it('draws everything nested in a band as a band, its title in the strip between them', () => {
@@ -613,9 +523,10 @@ describe('bands', () => {
     expectClear(r, c);
     const outer = bandOf(r, 'G');
     const inner = bandOf(r, 'I');
-    for (const p of inner.outline) {
-      expect(inBand(outer, p)).toBe(true);
-    }
+    expect(inner.startAngle).toBeGreaterThanOrEqual(outer.startAngle);
+    expect(inner.endAngle).toBeLessThanOrEqual(outer.endAngle);
+    expect(inner.innerRadius).toBeGreaterThan(outer.innerRadius);
+    expect(inner.outerRadius).toBeLessThan(outer.outerRadius);
     const { width, height } = c.groups[1]!.title!;
     const title = {
       minX: inner.title.x - width / 2,
@@ -943,7 +854,8 @@ describe('groupBounds', () => {
     });
   });
 
-  it('bounds a band by its outline', () => {
+  it('bounds a band by its arcs, the axes it crosses included', () => {
+    // The lower half of a ring from 50 to 100, from 0 to π.
     const b = groupBounds({
       kind: 'band',
       id: 'g',
@@ -953,15 +865,10 @@ describe('groupBounds', () => {
       startAngle: 0,
       endAngle: Math.PI,
       title: { x: 0, y: 0 },
-      outline: [{ x: 100, y: 0 }, { x: 0, y: 100 }, { x: -100, y: 0 }, { x: -50, y: 0 }, { x: 0, y: 50 }, { x: 50, y: 0 }],
     });
-    expect(b).toEqual({ minX: -100, minY: 0, maxX: 100, maxY: 100 });
-  });
-});
-
-describe('outlinePath', () => {
-  it('draws a closed path through the outline, moved and rounded to 0.01px', () => {
-    const d = outlinePath([{ x: 0, y: 0 }, { x: 10.123, y: -0.001 }, { x: 5, y: 8 }], 2, 3);
-    expect(d).toBe('M2,3L12.12,3L7,11Z');
+    expect(b.minX).toBeCloseTo(-100, 9);
+    expect(b.maxX).toBeCloseTo(100, 9);
+    expect(b.minY).toBeCloseTo(0, 9);
+    expect(b.maxY).toBeCloseTo(100, 9);
   });
 });

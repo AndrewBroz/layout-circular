@@ -138,10 +138,9 @@ Each group comes back as one of two shapes, told apart by `kind`:
 - `kind: 'box'` is a rectangle. It has a center `x`, `y`, a `width` and
   a `height`. `titleSide` says whether its title goes at the top or the
   bottom.
-- `kind: 'band'` is a curved strip that follows the ring. Its wall is
-  `outline`, a closed polygon, and `outlinePath(outline)` turns it into
-  an SVG path. It lies between `innerRadius` and `outerRadius` around
-  `center`, and runs clockwise from `startAngle` to `endAngle`.
+- `kind: 'band'` is a curved strip that follows the ring. It lies
+  between `innerRadius` and `outerRadius` around `center`, and runs
+  clockwise from `startAngle` to `endAngle`.
 
 | `kind: 'box'` | `kind: 'band'` |
 | --- | --- |

@@ -68,18 +68,15 @@ export interface GroupBox {
   title: Point;
 }
 
-/** A group drawn as a band along the ring. Its wall is `outline`. The
- *  radii and angles give the slice of the annulus the outline lies in,
- *  swept clockwise from `startAngle` to `endAngle`. Angles are in the
- *  nodes' frame, as `PlacedNode.angle` is. */
+/** A group drawn as a band along the ring: the part of the annulus
+ *  between two radii, swept clockwise from `startAngle` to `endAngle`.
+ *  Angles are in the nodes' frame, as `PlacedNode.angle` is. */
 export interface GroupBand {
   kind: 'band';
   id: string;
   /** Center of the ring the band follows. */
   center: Point;
-  /** The outline's least distance from `center`. */
   innerRadius: number;
-  /** The outline's greatest distance from `center`. */
   outerRadius: number;
   startAngle: number;
   /** Greater than `startAngle`, by less than a full turn. */
@@ -87,12 +84,6 @@ export interface GroupBand {
   /** Center of the title, which reads horizontally: just outside the
    *  band's outer edge, on the ray through its middle. */
   title: Point;
-  /** The band's wall, a closed polygon: the outer wall from
-   *  `startAngle` to `endAngle`, then the inner wall back. Each wall
-   *  keeps the padding from every member and from the paths between
-   *  members, and bends gently between them. The ends round onto the
-   *  end members. `outlinePath` turns it into an SVG path. */
-  outline: Point[];
 }
 
 export type GroupShape = GroupBox | GroupBand;
@@ -163,16 +154,6 @@ const AREA_SLACK = 1.3;
  *  still counts as least grown: 5%, so a turn that is tighter or turns
  *  less is not lost to a few pixels of growth. */
 const GROWTH_SLACK = 1.05;
-
-/** How sharply a band's wall may bend between its members: the radius
- *  of the curve it hangs on, px. At 1500 the walls read as arcs near
- *  the ring's own; the prototype's 100 kept the padding exactly but
- *  pinched between nodes like a blob. */
-const BEND = 1500;
-
-/** Angular steps a band's wall is traced in, around the whole circle:
- *  half a degree each, fine enough that the outline reads as a curve. */
-const BAND_STEPS = 720;
 
 /** How many times a box that will not clear is redrawn as a band,
  *  with everything above and below it, before giving up. */
@@ -260,35 +241,36 @@ export const groupTreeOf = (
 const wrap = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 
 /** The axis-aligned bounds of a group's shape. */
-export const groupBounds = (g: GroupShape): Bounds =>
-  g.kind === 'box'
-    ? {
-        minX: g.x - g.width / 2,
-        minY: g.y - g.height / 2,
-        maxX: g.x + g.width / 2,
-        maxY: g.y + g.height / 2,
-      }
-    : boundsOf(g.outline);
-
-/** An SVG path through a band's outline, closed, moved by (dx, dy).
- *  Coordinates are rounded to 0.01px. */
-export const outlinePath = (outline: Point[], dx = 0, dy = 0): string => {
-  const f = (v: number) => (Math.round(v * 100) / 100 || 0).toString();
-  return outline.map((p, i) => `${i === 0 ? 'M' : 'L'}${f(p.x + dx)},${f(p.y + dy)}`).join('') + 'Z';
+export const groupBounds = (g: GroupShape): Bounds => {
+  if (g.kind === 'box') {
+    return {
+      minX: g.x - g.width / 2,
+      minY: g.y - g.height / 2,
+      maxX: g.x + g.width / 2,
+      maxY: g.y + g.height / 2,
+    };
+  }
+  // The extremes are at the four corners, or where the outer arc
+  // crosses an axis inside the sweep.
+  const points: Point[] = [];
+  const at = (r: number, a: number) =>
+    points.push({ x: g.center.x + r * Math.cos(a), y: g.center.y + r * Math.sin(a) });
+  for (const a of [g.startAngle, g.endAngle]) {
+    at(g.innerRadius, a);
+    at(g.outerRadius, a);
+  }
+  const first = Math.ceil(g.startAngle / (Math.PI / 2));
+  for (let k = first; k * (Math.PI / 2) <= g.endAngle; k++) {
+    at(g.outerRadius, k * (Math.PI / 2));
+  }
+  return boundsOf(points);
 };
 
 /** The area a shape covers, px². Turns are ranked by it. */
-const areaOf = (g: GroupShape): number => {
-  if (g.kind === 'box') {
-    return g.width * g.height;
-  }
-  let twice = 0;
-  g.outline.forEach((p, i) => {
-    const q = g.outline[(i + 1) % g.outline.length]!;
-    twice += p.x * q.y - q.x * p.y;
-  });
-  return Math.abs(twice) / 2;
-};
+const areaOf = (g: GroupShape): number =>
+  g.kind === 'box'
+    ? g.width * g.height
+    : ((g.endAngle - g.startAngle) / 2) * (g.outerRadius ** 2 - g.innerRadius ** 2);
 
 const boundsOf = (points: Point[]): Bounds => ({
   minX: Math.min(...points.map((p) => p.x)),
@@ -348,35 +330,45 @@ const toSegment = (p: Point, a: Point, b: Point): number => {
   return Math.hypot(p.x - a.x - t * vx, p.y - a.y - t * vy);
 };
 
-/** A band as a region: its outline, a closed polygon. */
 const bandRegion = (g: GroupBand): Region => {
-  const pts = g.outline;
+  const { center, innerRadius: rIn, outerRadius: rOut, startAngle, endAngle } = g;
+  const sweep = endAngle - startAngle;
+  const at = (r: number, a: number): Point => ({
+    x: center.x + r * Math.cos(a),
+    y: center.y + r * Math.sin(a),
+  });
   return cached({
-    bounds: boundsOf(pts),
+    bounds: groupBounds(g),
     wall: () => {
       const out: Point[] = [];
-      pts.forEach((p, i) => along(p, pts[(i + 1) % pts.length]!, out));
+      for (const r of rIn > 0 ? [rIn, rOut] : [rOut]) {
+        const steps = Math.max(1, Math.ceil((r * sweep) / SAMPLE));
+        for (let i = 0; i <= steps; i++) {
+          out.push(at(r, startAngle + (sweep * i) / steps));
+        }
+      }
+      along(at(rIn, startAngle), at(rOut, startAngle), out);
+      along(at(rIn, endAngle), at(rOut, endAngle), out);
       return out;
     },
     distance: (p) => {
-      // Squared distance to the nearest wall segment, rooted once.
-      let d2 = Infinity;
-      let inside = false;
-      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-        const a = pts[i]!;
-        const b = pts[j]!;
-        const vx = b.x - a.x;
-        const vy = b.y - a.y;
-        const len2 = vx * vx + vy * vy;
-        const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2));
-        d2 = Math.min(d2, (p.x - a.x - t * vx) ** 2 + (p.y - a.y - t * vy) ** 2);
-        // Even-odd: a ray to the right crosses the wall an odd number
-        // of times from inside.
-        if (a.y > p.y !== b.y > p.y && p.x < (vx * (p.y - a.y)) / vy + a.x) {
-          inside = !inside;
+      const rho = Math.hypot(p.x - center.x, p.y - center.y);
+      const into = (((Math.atan2(p.y - center.y, p.x - center.x) - startAngle) % TAU) + TAU) % TAU;
+      if (into <= sweep) {
+        const radial = Math.max(rIn - rho, rho - rOut);
+        if (radial > 0) {
+          return radial;
         }
+        // Inside: the nearest wall, an arc or an end ray.
+        const toStart = rho * Math.sin(Math.min(into, Math.PI / 2));
+        const toEnd = rho * Math.sin(Math.min(sweep - into, Math.PI / 2));
+        return -Math.min(rho - rIn, rOut - rho, toStart, toEnd);
       }
-      return inside ? -Math.sqrt(d2) : Math.sqrt(d2);
+      // Outside the sweep the nearest point lies on an end.
+      return Math.min(
+        toSegment(p, at(rIn, startAngle), at(rOut, startAngle)),
+        toSegment(p, at(rIn, endAngle), at(rOut, endAngle))
+      );
     },
   });
 };
@@ -892,7 +884,9 @@ const crosses = (line: Point[], r: Bounds): boolean => {
 /**
  * Every group's shape, deepest first, so a parent wraps its children.
  * A box is its members, the paths between them and its child boxes,
- * padded. A band is drawn by `bandOf`.
+ * padded. A band is the slice of
+ * the annulus that holds its members, its child bands and their
+ * titles, padded: its ends keep the side padding, its arcs the bottom.
  */
 const placeShapes = (
   nodes: LayoutNodeInput[],
@@ -962,381 +956,107 @@ const placeShapes = (
       continue;
     }
 
-    const band = bandOf(g, tree, subtree, kids, own, result, seatless, at);
-    if (band) {
-      shapes.set(g, band);
+    // The band's middle: opposite the widest empty arc between its
+    // nodes, so the sweep is measured around the members, not across
+    // the gap.
+    const angles = subtree
+      .get(g)!
+      .filter((n) => !seatless.has(n.id))
+      .map((n) => Math.atan2(at.get(n.id)!.y, at.get(n.id)!.x))
+      .sort((a, b) => a - b);
+    let middle = angles[0]!;
+    if (angles.length > 1) {
+      let gapAt = angles[angles.length - 1]!;
+      let widest = TAU - (angles[angles.length - 1]! - angles[0]!);
+      for (let i = 1; i < angles.length; i++) {
+        if (angles[i]! - angles[i - 1]! > widest) {
+          widest = angles[i]! - angles[i - 1]!;
+          gapAt = angles[i - 1]!;
+        }
+      }
+      middle = wrap(gapAt + widest / 2 + Math.PI);
     }
+
+    // What the band holds: member corners, child band corners, and
+    // child titles' corners.
+    const corners: Point[] = [];
+    let near = Infinity;
+    let far = 0;
+    for (const r of own) {
+      corners.push(
+        { x: r.minX, y: r.minY },
+        { x: r.maxX, y: r.minY },
+        { x: r.minX, y: r.maxY },
+        { x: r.maxX, y: r.maxY }
+      );
+      // The nearest point of the rect to the center.
+      near = Math.min(
+        near,
+        Math.hypot(Math.min(Math.max(0, r.minX), r.maxX), Math.min(Math.max(0, r.minY), r.maxY))
+      );
+    }
+    for (const k of kids) {
+      if (k.kind !== 'band') {
+        continue;
+      }
+      for (const a of [k.startAngle, k.endAngle]) {
+        for (const r of [k.innerRadius, k.outerRadius]) {
+          corners.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
+        }
+      }
+      near = Math.min(near, k.innerRadius);
+      far = Math.max(far, k.outerRadius);
+      const t = titleBounds(k, tree.title.get(k.id)!);
+      corners.push(
+        { x: t.minX, y: t.minY },
+        { x: t.maxX, y: t.minY },
+        { x: t.minX, y: t.maxY },
+        { x: t.maxX, y: t.maxY }
+      );
+    }
+    // Each end keeps the side padding from every corner: a corner ρ
+    // from the center clears the end's ray by ρ·sin(Δ).
+    const side = Math.max(pad.left, pad.right);
+    let from = Infinity;
+    let to = -Infinity;
+    for (const c of corners) {
+      const rho = Math.hypot(c.x, c.y);
+      const rel = wrap(Math.atan2(c.y, c.x) - middle);
+      const room = rho > 0 ? Math.asin(Math.min(1, side / rho)) : Math.PI / 2;
+      from = Math.min(from, rel - room);
+      to = Math.max(to, rel + room);
+      far = Math.max(far, rho);
+    }
+    // A sweep can't close the circle; past that the band clashes with
+    // whatever it would have wrapped, and the clash test says so.
+    const most = TAU - 1e-6;
+    if (to - from > most) {
+      const mid = (from + to) / 2;
+      from = mid - most / 2;
+      to = mid + most / 2;
+    }
+    const startAngle = wrap(middle + from);
+    const endAngle = startAngle + (to - from);
+    const innerRadius = Math.max(0, near - pad.bottom);
+    const outerRadius = far + pad.bottom;
+    const size = tree.title.get(g)!;
+    const titleAt = (startAngle + endAngle) / 2;
+    const dx = Math.cos(titleAt);
+    const dy = Math.sin(titleAt);
+    // The title box's half-depth along the ray, so its nearest side
+    // keeps TITLE_GAP from the band's outer edge.
+    const reach = (Math.abs(dx) * size.width + Math.abs(dy) * size.height) / 2;
+    const rho = outerRadius + TITLE_GAP + reach;
+    shapes.set(g, {
+      kind: 'band',
+      id: g,
+      center: { x: 0, y: 0 },
+      innerRadius,
+      outerRadius,
+      startAngle,
+      endAngle,
+      title: { x: rho * dx, y: rho * dy },
+    });
   }
   return shapes;
-};
-
-/** Where a ray from the center along the unit vector (ux, uy) meets a
- *  rect grown by a disc of radius p, as [near, far] distances, or
- *  undefined when it misses. The grown rect is the rect's two
- *  crosswise slabs plus a disc at each corner. */
-const rayHitsPadded = (ux: number, uy: number, r: Bounds, p: number): [number, number] | undefined => {
-  let lo = Infinity;
-  let hi = -Infinity;
-  const slab = (b: Bounds) => {
-    let t0 = -Infinity;
-    let t1 = Infinity;
-    for (const [u, min, max] of [
-      [ux, b.minX, b.maxX],
-      [uy, b.minY, b.maxY],
-    ] as const) {
-      if (Math.abs(u) < 1e-12) {
-        if (min > 0 || max < 0) {
-          return;
-        }
-      } else {
-        t0 = Math.max(t0, Math.min(min / u, max / u));
-        t1 = Math.min(t1, Math.max(min / u, max / u));
-      }
-    }
-    if (t1 >= Math.max(t0, 0)) {
-      lo = Math.min(lo, Math.max(t0, 0));
-      hi = Math.max(hi, t1);
-    }
-  };
-  slab({ minX: r.minX - p, minY: r.minY, maxX: r.maxX + p, maxY: r.maxY });
-  slab({ minX: r.minX, minY: r.minY - p, maxX: r.maxX, maxY: r.maxY + p });
-  for (const c of [
-    { x: r.minX, y: r.minY },
-    { x: r.maxX, y: r.minY },
-    { x: r.minX, y: r.maxY },
-    { x: r.maxX, y: r.maxY },
-  ]) {
-    const hit = rayHitsDisc(ux, uy, c, p);
-    if (hit) {
-      lo = Math.min(lo, hit[0]);
-      hi = Math.max(hi, hit[1]);
-    }
-  }
-  return hi >= lo ? [lo, hi] : undefined;
-};
-
-/** Where a ray from the center along (ux, uy) meets the disc of radius
- *  p around c, as [near, far], or undefined when it misses. */
-const rayHitsDisc = (ux: number, uy: number, c: Point, p: number): [number, number] | undefined => {
-  const along = c.x * ux + c.y * uy;
-  const disc = p * p - (c.x * c.x + c.y * c.y) + along * along;
-  if (disc < 0 || along + Math.sqrt(disc) < 0) {
-    return undefined;
-  }
-  return [Math.max(0, along - Math.sqrt(disc)), along + Math.sqrt(disc)];
-};
-
-/**
- * A band that follows the ring and keeps one padding, the largest of
- * the side and bottom paddings, from everything it holds: its members,
- * the paths between them, its child bands and their titles. Its walls
- * are traced ray by ray from the center. Round each end member the
- * wall keeps exactly the padding, so the end is the member's padded
- * outline, round at its corners, with no horn. From the members next
- * to them inward, each wall hangs on a curve of radius BEND drawn over
- * everything it holds, so it bends gently instead of pinching between
- * nodes. Between, it carries the end member's side on and eases onto
- * the curve. A light smoothing then rounds the creases, never inside
- * the padding. Undefined when the group has nothing on the ring.
- */
-const bandOf = (
-  g: string,
-  tree: GroupTree,
-  subtree: Map<string, LayoutNodeInput[]>,
-  kids: GroupShape[],
-  own: Bounds[],
-  result: CircularLayoutResult,
-  seatless: Set<string>,
-  at: Map<string, Point>
-): GroupBand | undefined => {
-  const pad = tree.padding.get(g)!;
-  const p = Math.max(pad.left, pad.right, pad.bottom);
-  const members = subtree.get(g)!.filter((n) => !seatless.has(n.id) && at.has(n.id));
-  if (members.length === 0) {
-    return undefined;
-  }
-  // The band's middle: opposite the widest empty arc between its
-  // members, so the sweep is measured around them, not across the gap.
-  const angles = members.map((n) => Math.atan2(at.get(n.id)!.y, at.get(n.id)!.x)).sort((a, b) => a - b);
-  let gapAt = angles[angles.length - 1]!;
-  let widest = TAU - (angles[angles.length - 1]! - angles[0]!);
-  for (let i = 1; i < angles.length; i++) {
-    if (angles[i]! - angles[i - 1]! > widest) {
-      widest = angles[i]! - angles[i - 1]!;
-      gapAt = angles[i - 1]!;
-    }
-  }
-  const middle = wrap(gapAt + widest / 2 + Math.PI);
-  const rel = (q: Point) => wrap(Math.atan2(q.y, q.x) - middle);
-
-  // What the band holds: rects and points, each padded by p.
-  const rects: Bounds[] = [...own];
-  const points: Point[] = [];
-  for (const k of kids) {
-    if (k.kind !== 'band') {
-      continue;
-    }
-    points.push(...k.outline);
-    rects.push(titleBounds(k, tree.title.get(k.id)!));
-  }
-  const inside = new Set(members.map((n) => n.id));
-  for (const e of result.edges) {
-    if (inside.has(e.start) && inside.has(e.end)) {
-      points.push(...e.points);
-    }
-  }
-  // The members' mean distance from the center turns an angle into an
-  // arc length along the ring, for the hung curve's sag.
-  const ring = members.reduce((sum, n) => sum + Math.hypot(at.get(n.id)!.x, at.get(n.id)!.y), 0) / members.length;
-
-  // On each ray, the nearest and farthest padded point the band holds.
-  const phi = (k: number) => -Math.PI + (TAU * k) / BAND_STEPS;
-  const hugIn: number[] = [];
-  const hugOut: number[] = [];
-  for (let k = 0; k < BAND_STEPS; k++) {
-    const ux = Math.cos(middle + phi(k));
-    const uy = Math.sin(middle + phi(k));
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (const hit of [
-      ...rects.map((r) => rayHitsPadded(ux, uy, r, p)),
-      ...points.map((q) => rayHitsDisc(ux, uy, q, p)),
-    ]) {
-      if (hit) {
-        lo = Math.min(lo, hit[0]);
-        hi = Math.max(hi, hit[1]);
-      }
-    }
-    hugIn.push(lo);
-    hugOut.push(hi);
-  }
-
-  // Each wall has three parts. Round each end member, from its far
-  // side to its corner nearest the band's middle, the wall keeps
-  // exactly the padding. From the members next to them inward, it
-  // hangs on the gentle curve. In between, it eases from the end
-  // member's side onto the curve.
-  const ray = (angle: number) => ((angle + Math.PI) / TAU) * BAND_STEPS;
-  const rayOf = (n: LayoutNodeInput) => ray(rel(at.get(n.id)!));
-  const byAngle = [...members].sort((m, q) => rayOf(m) - rayOf(q));
-  const firstMember = byAngle[0]!;
-  const lastMember = byAngle[byAngle.length - 1]!;
-  const cornerRays = (n: LayoutNodeInput): number[] => {
-    const c = at.get(n.id)!;
-    return [-1, 1].flatMap((sx) => [-1, 1].map((sy) => ray(rel({ x: c.x + (sx * n.width) / 2, y: c.y + (sy * n.height) / 2 }))));
-  };
-  /** Where a wall leaves an end member: the ray, between the member's
-   *  middle and a little past its corner nearest the band's middle, on
-   *  which its padding reaches farthest from the center (outer wall)
-   *  or nearest to it (inner wall). That is the crown of the padded
-   *  corner, so the wall leaves it level. The corner is the nearer of
-   *  the member's two corners farther from the center for the outer
-   *  wall, of the two nearer for the inner wall. */
-  const CROWN_RAYS = 6; // three degrees past the corner: its rounding, p wide
-  const leaveRay = (hug: number[], n: LayoutNodeInput, outward: boolean, isLast: boolean): number => {
-    const c = at.get(n.id)!;
-    const corners = [-1, 1]
-      .flatMap((sx) => [-1, 1].map((sy) => ({ x: c.x + (sx * n.width) / 2, y: c.y + (sy * n.height) / 2 })))
-      .sort((p, q) => Math.hypot(q.x, q.y) - Math.hypot(p.x, p.y));
-    const rays = (outward ? corners.slice(0, 2) : corners.slice(2)).map((q) => ray(rel(q)));
-    const corner = isLast ? Math.floor(Math.min(...rays)) - CROWN_RAYS : Math.ceil(Math.max(...rays)) + CROWN_RAYS;
-    const middleRay = Math.round(rayOf(n));
-    let best = middleRay;
-    for (let j = Math.min(middleRay, corner); j <= Math.max(middleRay, corner); j++) {
-      const v = hug[j];
-      if (v !== undefined && Number.isFinite(v) && (outward ? v > hug[best]! : v < hug[best]!)) {
-        best = j;
-      }
-    }
-    return best;
-  };
-  // The curve sags a·(k − j)² from the padded point on ray j at ray k.
-  const a = (ring * (TAU / BAND_STEPS)) ** 2 / (2 * BEND);
-  /** The end member's padded side carried on past its corner, at the
-   *  rate the wall moved away from the band over the last few rays
-   *  before the corner. `dir` points away from the band's middle. */
-  const SIDE_RAYS = 3; // a degree and a half: clear of the corner's rounding
-  const alongSide = (wall: number[], from: number, dir: number, k: number, outward: boolean): number => {
-    const back = wall[from + dir * SIDE_RAYS];
-    const rate = back === undefined || !Number.isFinite(back) ? 0 : (wall[from]! - back) / SIDE_RAYS;
-    return wall[from]! + (outward ? Math.max(0, rate) : Math.min(0, rate)) * Math.abs(k - from);
-  };
-  // The rounding of a wall's creases: 20 passes of a 7-ray (3.5
-  // degree) average act like a blur about 9 rays wide, enough to round
-  // a crease without flattening the gentle curve.
-  const SMOOTH_RAYS = 3;
-  const SMOOTH_PASSES = 60;
-  /** One wall, from the padded points on each ray: the farthest for
-   *  the outer wall, the nearest for the inner. */
-  const wallOf = (hug: number[], outward: boolean): number[] => {
-    const sign = outward ? 1 : -1;
-    let kA = leaveRay(hug, firstMember, outward, false);
-    let kB = leaveRay(hug, lastMember, outward, true);
-    if (kA >= kB) {
-      // The end members meet: nothing between them to hang a curve on.
-      kA = kB = Math.round(rayOf(firstMember));
-    }
-    const half = (kA + kB) / 2;
-    // The curve takes over where the next member's corners begin, so
-    // the wall passes every inner member on the curve alone.
-    const n0 = byAngle.length > 2 ? Math.min(half, Math.max(kA, Math.min(...cornerRays(byAngle[1]!)))) : half;
-    const n1 = byAngle.length > 2 ? Math.max(half, Math.min(kB, Math.max(...cornerRays(byAngle[byAngle.length - 2]!)))) : half;
-    const hung: number[] = [];
-    for (let j = kA; j <= kB; j++) {
-      if (Number.isFinite(hug[j]!)) {
-        hung.push(j);
-      }
-    }
-    const envelope = lowestParabolas(hung, (j) => (-sign * hug[j]!) / a, BAND_STEPS);
-    const wall: number[] = [];
-    for (let k = 0; k < BAND_STEPS; k++) {
-      if (!Number.isFinite(hug[k]!) || k <= kA || k >= kB) {
-        wall.push(Number.isFinite(hug[k]!) ? hug[k]! : NaN);
-        continue;
-      }
-      // How much of the curve the wall takes: none at the end member's
-      // corner, all from the next member's middle on, a half-cosine
-      // between.
-      let w = 1;
-      let from = kA;
-      let dir = -1;
-      if (k < n0) {
-        w = (1 - Math.cos((Math.PI * (k - kA)) / (n0 - kA))) / 2;
-      } else if (k > n1) {
-        w = (1 - Math.cos((Math.PI * (kB - k)) / (kB - n1))) / 2;
-        from = kB;
-        dir = 1;
-      }
-      const curve = -sign * a * envelope[k]!;
-      // The side, carried on, stops where it reaches the curve.
-      const carried = w < 1 ? alongSide(hug, from, dir, k, outward) : curve;
-      const side = outward ? Math.min(carried, Math.max(curve, hug[from]!)) : Math.max(carried, Math.min(curve, hug[from]!));
-      const v = side + (curve - side) * w;
-      wall.push(outward ? Math.max(hug[k]!, v) : Math.min(hug[k]!, v));
-    }
-    // Round the creases: where the eased part meets the end member's
-    // side and the curve, and where two members' curves meet. Each
-    // ray between the end members is averaged with its neighbors,
-    // never inside the padding. The end members' own rays stay put.
-    for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
-      const before = wall.slice();
-      for (let k = kA + 1; k < kB; k++) {
-        let sum = 0;
-        for (let d = -SMOOTH_RAYS; d <= SMOOTH_RAYS; d++) {
-          sum += before[k + d]!;
-        }
-        const mean = sum / (2 * SMOOTH_RAYS + 1);
-        wall[k] = outward ? Math.max(hug[k]!, mean) : Math.min(hug[k]!, mean);
-      }
-    }
-    return wall;
-  };
-  const outR = wallOf(hugOut, true);
-  const inR = wallOf(hugIn, false);
-  let first = Math.round(rayOf(firstMember));
-  while (first > 0 && Number.isFinite(outR[first - 1]!)) {
-    first--;
-  }
-  let last = Math.round(rayOf(lastMember));
-  while (last < BAND_STEPS - 1 && Number.isFinite(outR[last + 1]!)) {
-    last++;
-  }
-  const outer: Point[] = [];
-  const inner: Point[] = [];
-  for (let k = first; k <= last; k++) {
-    const a = middle + phi(k);
-    outer.push({ x: outR[k]! * Math.cos(a), y: outR[k]! * Math.sin(a) });
-    const r = Math.max(0, inR[k]!);
-    inner.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
-  }
-  const startAngle = wrap(middle + phi(first));
-  const endAngle = startAngle + (phi(last) - phi(first));
-  // The title on the ray through the band's middle, its nearest side
-  // TITLE_GAP beyond the outer wall there.
-  const mid = Math.round((first + last) / 2);
-  const size = tree.title.get(g)!;
-  const titleAt = middle + phi(mid);
-  const dx = Math.cos(titleAt);
-  const dy = Math.sin(titleAt);
-  const reach = (Math.abs(dx) * size.width + Math.abs(dy) * size.height) / 2;
-  const rho = outR[mid]! + TITLE_GAP + reach;
-  return {
-    kind: 'band',
-    id: g,
-    center: { x: 0, y: 0 },
-    innerRadius: Math.max(0, Math.min(...inR.slice(first, last + 1))),
-    outerRadius: Math.max(...outR.slice(first, last + 1)),
-    startAngle,
-    endAngle,
-    title: { x: rho * dx, y: rho * dy },
-    outline: simplified([...outer, ...inner.reverse()]),
-  };
-};
-
-/**
- * For each k from 0 to n − 1, the least of (k − j)² + f(j) over the
- * given js, in ascending order: the lower envelope of parabolas, in one
- * pass (Felzenszwalb and Huttenlocher's distance transform). Infinity
- * everywhere when js is empty.
- */
-const lowestParabolas = (js: number[], f: (j: number) => number, n: number): number[] => {
-  const out = new Array<number>(n).fill(Infinity);
-  if (js.length === 0) {
-    return out;
-  }
-  // The parabolas on the envelope, and where each starts to be lowest.
-  const v: number[] = [js[0]!];
-  const z: number[] = [-Infinity];
-  for (const q of js.slice(1)) {
-    for (;;) {
-      const p = v[v.length - 1]!;
-      const cross = (f(q) + q * q - (f(p) + p * p)) / (2 * (q - p));
-      if (cross <= z[z.length - 1]!) {
-        v.pop();
-        z.pop();
-        continue;
-      }
-      v.push(q);
-      z.push(cross);
-      break;
-    }
-  }
-  let i = 0;
-  for (let k = 0; k < n; k++) {
-    while (i + 1 < v.length && z[i + 1]! < k) {
-      i++;
-    }
-    out[k] = (k - v[i]!) ** 2 + f(v[i]!);
-  }
-  return out;
-};
-
-/** How far a simplified outline may stray from the traced one, px: a
- *  quarter pixel, below what a renderer draws. */
-const OUTLINE_TOLERANCE = 0.25;
-
-/** An outline with the points dropped that lie within
- *  OUTLINE_TOLERANCE of the line between the points kept around them,
- *  by Douglas and Peucker's method. The first and last points stay. */
-const simplified = (pts: Point[]): Point[] => {
-  const keep = new Array<boolean>(pts.length).fill(false);
-  keep[0] = keep[pts.length - 1] = true;
-  const spans: [number, number][] = [[0, pts.length - 1]];
-  for (let span = spans.pop(); span; span = spans.pop()) {
-    const [from, to] = span;
-    let far = -1;
-    let most = OUTLINE_TOLERANCE;
-    for (let i = from + 1; i < to; i++) {
-      const d = toSegment(pts[i]!, pts[from]!, pts[to]!);
-      if (d > most) {
-        most = d;
-        far = i;
-      }
-    }
-    if (far >= 0) {
-      keep[far] = true;
-      spans.push([from, far], [far, to]);
-    }
-  }
-  return pts.filter((_, i) => keep[i]);
 };

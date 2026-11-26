@@ -24,7 +24,7 @@
 import { fitGroups, groupTreeOf, titleRects } from './groups.js';
 import type { GroupShape, LayoutGroupInput, RingFit } from './groups.js';
 
-export { groupBounds, outlinePath } from './groups.js';
+export { groupBounds } from './groups.js';
 export type {
   Bounds,
   GroupBand,

@@ -133,8 +133,8 @@ bottom. A smaller turn that clears that way wins, if its shapes are as
 tight. So a title goes below instead of a turn, but never instead of a
 little growth. If no turn clears that cheaply, it grows each turn up
 to 1.5 times the radius, the same two ways. That cap keeps the diagram
-from swelling for one group. It then keeps the turns
-within 5% of the least growth and ranks them the same way.
+from swelling for one group. It then keeps the turns within 5% of the
+least growth and ranks them the same way.
 
 The shape follows from fit alone, not from how much of the ring a
 group covers. A box that clears at no turn and no growth is redrawn
@@ -142,15 +142,6 @@ as a band: a curved strip that follows the ring. The groups it sits
 in, and the groups inside it, become bands too. The layout tries this
 up to three times, and keeps the band only if it clashes less than
 the box did. A hub in the middle is never wrapped by a band.
-
-A band keeps one padding, the largest of the side and bottom
-paddings, from its members and the arrows between them. Round its two
-end members the padding is exact, so each end is the member's own
-padded outline, rounded at the corners. Between them, each wall bends
-gently, along a curve of radius 1500 pixels, so it reads as an arc
-near the ring's own rather than pinching between nodes. The wall
-carries the end member's side on and eases onto that curve, and a
-light smoothing rounds the creases.
 
 Sometimes an edge across the ring, such as a spoke, chord or branch,
 crosses the strip where a box's title would go. If no edge crosses
@@ -190,9 +181,9 @@ Edge labels also slide off group titles, as they do off boxes.
 
 ## Limits
 
-- A band's padding is exact round its end members and at its tightest
-  members between. On a small ring the gently bent walls stand further
-  off the members in the middle, and the outer wall can bulge.
+- A band that covers nearly the whole ring stops short of a full turn.
+  Its ends can then touch what it would have wrapped. `groupsClear`
+  says so.
 - The title of a band inside a band is checked against nodes and
   sibling shapes, but not against other titles.
 - A chord across a ring with a hub runs straight through the hub. Its

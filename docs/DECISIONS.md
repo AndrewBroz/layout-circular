@@ -231,20 +231,13 @@ before the move are recorded in its `docs/DECISIONS.md`.
   change: a clashing box may carry its title room at the bottom, but
   only at a turn smaller than the best that clears with titles on top.
   A title goes below instead of a turn, never instead of growth, so
-  the water cycle keeps its titles on top, as the owner chose. Boxes are tried one at a time, in input
-  order, and a move stands only if it clashes less, so one of two
-  boxes can move its title while the other keeps it on top. In Pele
-  this keeps Idea on top of "Funded" instead of turning the ring
-  upside down. A band is no longer an annular sector. Its wall is
-  traced ray by ray, keeps one padding from its members and the paths
-  between them, and bends along a curve of radius 1500px between them.
-  Round its two end members the padding is exact, so each end is the
-  member's padded outline; the wall carries the end member's side on,
-  eases onto the curve, and a light smoothing rounds the creases. So it
-  has no horns and no kink at its ends. `GroupBand` gained
-  `outline`, and `outlinePath` turns it into an SVG path; the radii and
-  angles stay, as the slice the outline lies in. Cut boxes (strategy
-  C) were dropped. Tests that pinned the old rule were rewritten:
-  five of eight and four of six are boxes now, the Krebs cycle turns
-  to lay its two-node group flat, and the band tests use a hub outside
-  a four-of-six group. No layout snapshot changed.
+  the water cycle keeps its titles on top, as the owner chose. Boxes
+  are tried one at a time, in input order, and a move stands only if
+  it clashes less, so one of two boxes can move its title while the
+  other keeps it on top. In Pele this keeps Idea on top of "Funded"
+  instead of turning the ring upside down. A band is main's annular
+  sector, unchanged. Cut boxes (strategy C) were dropped. Tests that
+  pinned the old rule were rewritten: five of eight and four of six
+  are boxes now, the Krebs cycle turns to lay its two-node group flat,
+  and the band tests use a hub outside a four-of-six group. No layout
+  snapshot changed.
