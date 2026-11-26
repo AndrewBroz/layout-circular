@@ -248,4 +248,7 @@ before the move are recorded in its `docs/DECISIONS.md`.
   check that costs no solve. The solve budget rose from 400 to 500, so
   a 32-node ring whose group clears only as a band, round a hub, has
   room to find it (448 solves, about half a second); one that cannot
-  clear stops at about 0.4s.
+  clear stops at about 0.4s. The README's band picture is now
+  `hub-band.svg`, a hub outside a four-of-six group, since six of
+  eight is a box under this rule. `lifecycle-band.svg` stays, since
+  the npm README still shows it.
