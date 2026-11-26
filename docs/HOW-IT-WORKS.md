@@ -109,8 +109,9 @@ never widens one gap to make room. Instead it makes room in four ways:
    It also holds the arrows between its members. An arc between two
    members can curve out past both of them, and the box holds it.
 2. A box whose top would meet a node outside it may put its title
-   room at the bottom instead. Each box is tried on its own, so one
-   box can move its title while its neighbor keeps its title on top.
+   room at the bottom, instead of the ring turning further. Each box
+   is tried on its own, so one box can move its title while its
+   neighbor keeps its title on top.
 3. The ring may turn. Any node, or the gap between two nodes, may take
    the top. The ring stays symmetric either way. A group then often
    sits level, where a rectangle fits it snugly.
@@ -121,14 +122,18 @@ Clear means 8 pixels of space between a shape and every node outside
 it, and between sibling shapes. That is enough for the wall and its
 neighbor to read as two separate things.
 
-Every group starts as a box. The layout tries each turn, growing it up
-to 1.15 times the radius. 15% is about where a grown ring starts to
-look roomier than its spacing. Among the turns that clear, it keeps
-those whose shapes cover at most 1.3 times the area of the tightest,
-so a box never sprawls over empty space to save a turn. Of those it
-picks the least turned, then the least grown. If no turn clears that
-cheaply, it grows each turn up to 1.5 times the radius. That cap keeps
-the diagram from swelling for one group. It then keeps the turns
+Every group starts as a box. The layout tries each turn with titles
+on top, growing it up to 1.15 times the radius. 15% is about where a
+grown ring starts to look roomier than its spacing. Among the turns
+that clear, it keeps those whose shapes cover at most 1.3 times the
+area of the tightest, so a box never sprawls over empty space to save
+a turn. Of those it picks the least turned, then the least grown.
+Then it tries the smaller turns again with titles allowed at the
+bottom. A smaller turn that clears that way wins, if its shapes are as
+tight. So a title goes below instead of a turn, but never instead of a
+little growth. If no turn clears that cheaply, it grows each turn up
+to 1.5 times the radius, the same two ways. That cap keeps the diagram
+from swelling for one group. It then keeps the turns
 within 5% of the least growth and ranks them the same way.
 
 The shape follows from fit alone, not from how much of the ring a

@@ -679,6 +679,32 @@ describe('box titles', () => {
     expectClear(r, c);
   });
 
+  it('grows the ring before it puts a title below: titles go below only instead of a turn', () => {
+    // The water cycle as Pele measures it. Unturned, both tops meet
+    // Evaporation; a little growth clears them, so both titles stay on
+    // top and Evaporation stays on top.
+    const box = (id: string, width: number, group?: string): LayoutNodeInput => ({
+      id,
+      width,
+      height: 48,
+      ...(group !== undefined && { group }),
+    });
+    const nodes = [box('E', 121.38), box('C', 134.72, 'Atmosphere'), box('P', 124.04, 'Atmosphere'), box('R', 83.14, 'Land'), box('O', 106.24, 'Land')];
+    const pele = { top: 40, right: 12, bottom: 12, left: 12 };
+    const groups = [
+      { id: 'Land', padding: pele, title: { width: 35.58, height: 24 } },
+      { id: 'Atmosphere', padding: pele, title: { width: 86.24, height: 24 } },
+    ];
+    const c = { nodes, edges: cycle('E', 'C', 'P', 'R', 'O'), groups };
+    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+    expect(boxOf(r, 'Atmosphere').titleSide).toBe('top');
+    expect(boxOf(r, 'Land').titleSide).toBe('top');
+    const e = r.nodes.find((p) => p.id === 'E')!;
+    expect(e.x).toBeCloseTo(0, 6);
+    expect(e.y).toBeLessThan(0);
+    expectClear(r, c);
+  });
+
   it('keeps titles on top when nothing crosses them', () => {
     const c = gallery[0]!;
     const r = circularLayout(c.nodes, c.edges, {}, c.groups);

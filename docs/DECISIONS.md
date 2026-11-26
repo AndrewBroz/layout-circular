@@ -228,8 +228,10 @@ before the move are recorded in its `docs/DECISIONS.md`.
   radius are kept first, then ranked the same way. A group becomes a
   band only when no box clears. The rule "half the ring or more is a
   band" is gone: shape follows fit, not the share of the ring. The
-  change: before a turn or growth is needed, a clashing box may carry
-  its title room at the bottom. Boxes are tried one at a time, in input
+  change: a clashing box may carry its title room at the bottom, but
+  only at a turn smaller than the best that clears with titles on top.
+  A title goes below instead of a turn, never instead of growth, so
+  the water cycle keeps its titles on top, as the owner chose. Boxes are tried one at a time, in input
   order, and a move stands only if it clashes less, so one of two
   boxes can move its title while the other keeps it on top. In Pele
   this keeps Idea on top of "Funded" instead of turning the ring

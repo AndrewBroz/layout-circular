@@ -9,7 +9,7 @@
  * 1. Tight shapes. A box hugs its members, and the arcs between them,
  *    with the renderer's own padding: side room, and title room on top.
  * 2. Title room below. A box whose top would meet an outside node may
- *    carry its title room at the bottom instead.
+ *    carry its title room at the bottom, instead of a further turn.
  * 3. Turn the ring. Any node may take the top, or the half-step
  *    between two nodes may, which is still mirror-symmetric. A group
  *    then sits balanced about an axis, where an axis-aligned box fits
@@ -402,6 +402,12 @@ const clash = (a: Region, b: Region, gap: number): number => {
   return depth;
 };
 
+/** A turn that clears, and how far it turns the ring, in seats. */
+interface Clear {
+  fitted: Fitted;
+  amount: number;
+}
+
 interface Fitted {
   result: CircularLayoutResult;
   shapes: Map<string, GroupShape>;
@@ -518,16 +524,16 @@ export const fitGroups = (
   };
 
   /**
-   * The shapes for one solve, each clashing box with its title room
-   * moved to the bottom where that clashes less. Boxes are tried one
-   * at a time, in input order, so a box whose top is clear keeps its
-   * title on top.
+   * The shapes for one solve. With `lower`, each clashing box has its
+   * title room moved to the bottom where that clashes less. Boxes are
+   * tried one at a time, in input order, so a box whose top is clear
+   * keeps its title on top.
    */
-  const titlesLowered = (result: CircularLayoutResult, bandSet: Set<string>) => {
+  const shapesFor = (result: CircularLayoutResult, bandSet: Set<string>, lower: boolean) => {
     let bottom = new Set<string>();
     let shapes = shapesOf(result, bandSet);
     let clashes = clashesOf(result, shapes, bandSet);
-    for (const g of tree.ids) {
+    for (const g of lower ? tree.ids : []) {
       if (clashes.residual === 0) {
         break;
       }
@@ -550,12 +556,14 @@ export const fitGroups = (
   let solves = 0;
 
   /** One turn, grown uniformly until clear or until `limit` times the
-   *  unfitted radius, from `grow` pixels a gap. */
+   *  unfitted radius, from `grow` pixels a gap. With `lower`, boxes may
+   *  carry their title room at the bottom. */
   const grown = (
     turn: number,
     halfStep: boolean,
     bandSet: Set<string>,
     limit: number,
+    lower: boolean,
     from = 0
   ): Fitted => {
     const cap = limit * base;
@@ -564,7 +572,7 @@ export const fitGroups = (
     for (let round = 0; ; round++) {
       solves++;
       const result = solve(fit(turn, halfStep, grow));
-      const done = { result, grow, ...titlesLowered(result, bandSet) };
+      const done = { result, grow, ...shapesFor(result, bandSet, lower) };
       if (done.residual === 0 || capped || round >= GROW_ROUNDS || solves >= SOLVE_BUDGET) {
         return done;
       }
@@ -606,7 +614,7 @@ export const fitGroups = (
    * turns whose shapes cover at most AREA_SLACK times the least area,
    * and of those the least turned, then the least grown.
    */
-  const tightest = (clear: { fitted: Fitted; amount: number }[], grown: boolean): Fitted => {
+  const tightest = (clear: Clear[], grown: boolean): Clear => {
     let pool = clear;
     if (grown) {
       const least = Math.min(...pool.map((c) => c.fitted.result.radius));
@@ -615,47 +623,51 @@ export const fitGroups = (
     const least = Math.min(...pool.map((c) => areaIn(c.fitted)));
     pool = pool.filter((c) => areaIn(c.fitted) <= least * AREA_SLACK);
     pool.sort((a, b) => a.amount - b.amount || a.fitted.result.radius - b.fitted.result.radius);
-    return pool[0]!.fitted;
+    return pool[0]!;
   };
 
   /**
-   * The turn. Every turn is grown up to CHEAP_GROWTH, and the tightest
-   * of those that clear wins. When none clears, every turn is grown on
-   * up to GROW_CAP, and the tightest of those that clear wins, the
-   * least grown first. When none clears at all, the shallowest clash
-   * wins, so the flag goes up on the best there is. Past the solve
-   * budget, the turns already tried are ranked as they stand.
+   * The turn. Every turn is first grown up to CHEAP_GROWTH with its
+   * titles on top. A box may then put its title room at the bottom,
+   * but only at a turn smaller than the best that clears with titles
+   * on top: a title goes below instead of turning the ring, never
+   * instead of growing it. The tightest of the turns that clear wins.
+   * When none clears, the same two steps run again up to GROW_CAP, and
+   * the tightest wins, the least grown first. When none clears at all,
+   * the shallowest clash wins, so the flag goes up on the best there
+   * is. Past the solve budget, the turns already tried are ranked as
+   * they stand.
    */
   const search = (bandSet: Set<string>): Fitted => {
-    const cheap = new Map<string, Fitted>();
-    const clear: { fitted: Fitted; amount: number }[] = [];
-    for (const { turn, halfStep } of turns) {
-      if (solves >= SOLVE_BUDGET && cheap.size > 0) {
-        break;
+    const tried = new Map<string, Fitted>();
+    const clear: Clear[] = [];
+    const pass = (limit: number, isGrown: boolean) => {
+      for (const lower of [false, true]) {
+        const upright = clear.length > 0 ? tightest(clear, isGrown).amount : Infinity;
+        for (const { turn, halfStep } of turns) {
+          const amount = turned(turn, halfStep);
+          const key = `${turn} ${halfStep} ${lower}`;
+          const before = tried.get(key);
+          if ((lower && amount >= upright - 1e-9) || before?.residual === 0 || (solves >= SOLVE_BUDGET && tried.size > 0)) {
+            continue;
+          }
+          const fitted = grown(turn, halfStep, bandSet, limit, lower, before?.grow ?? 0);
+          tried.set(key, fitted);
+          if (fitted.residual === 0) {
+            clear.push({ fitted, amount });
+          }
+        }
       }
-      const fitted = grown(turn, halfStep, bandSet, CHEAP_GROWTH);
-      cheap.set(`${turn} ${halfStep}`, fitted);
-      if (fitted.residual === 0) {
-        clear.push({ fitted, amount: turned(turn, halfStep) });
-      }
-    }
+    };
+    pass(CHEAP_GROWTH, false);
     if (clear.length > 0) {
-      return tightest(clear, false);
+      return tightest(clear, false).fitted;
     }
-    let shallowest: Fitted | undefined;
-    for (const { turn, halfStep } of turns) {
-      const first = cheap.get(`${turn} ${halfStep}`);
-      if (!first) {
-        continue;
-      }
-      const fitted = solves >= SOLVE_BUDGET ? first : grown(turn, halfStep, bandSet, GROW_CAP, first.grow);
-      if (fitted.residual === 0) {
-        clear.push({ fitted, amount: turned(turn, halfStep) });
-      } else if (!shallowest || fitted.residual < shallowest.residual) {
-        shallowest = fitted;
-      }
+    pass(GROW_CAP, true);
+    if (clear.length > 0) {
+      return tightest(clear, true).fitted;
     }
-    return clear.length > 0 ? tightest(clear, true) : shallowest!;
+    return [...tried.values()].reduce((a, b) => (b.residual < a.residual ? b : a));
   };
 
   /**
