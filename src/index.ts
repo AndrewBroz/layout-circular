@@ -1,4 +1,4 @@
-export { circularLayout, groupBounds } from './layout.js';
+export { circularLayout, groupBounds, outlinePath } from './layout.js';
 export type {
   Bounds,
   CircularLayoutOptions,

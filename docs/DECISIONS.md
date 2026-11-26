@@ -217,3 +217,29 @@ before the move are recorded in its `docs/DECISIONS.md`.
   rings of mermaid-sized nodes, for the arcs plus padding. The Pele
   pictures in `docs/media` were drawn before this change; they show it
   after Pele picks up a release with it.
+- **2026-11-25 — Provisional: group shapes by fit, with the title
+  allowed below.** Pending the owner's judgment of renders, on branch
+  `feat/fit-groups`; not settled. The owner picked strategy B from a
+  prototype gallery, with one change. Every group starts as a box.
+  Among the turns that clear within 1.15 times the radius, those whose
+  shapes cover at most 1.3 times the tightest turn's area are kept,
+  then the least turned wins, then the least grown. When none clears,
+  every turn grows up to 1.5 times; the turns within 5% of the least
+  radius are kept first, then ranked the same way. A group becomes a
+  band only when no box clears. The rule "half the ring or more is a
+  band" is gone: shape follows fit, not the share of the ring. The
+  change: before a turn or growth is needed, a clashing box may carry
+  its title room at the bottom. Boxes are tried one at a time, in input
+  order, and a move stands only if it clashes less, so one of two
+  boxes can move its title while the other keeps it on top. In Pele
+  this keeps Idea on top of "Funded" instead of turning the ring
+  upside down. A band is no longer an annular sector. Its wall is
+  traced ray by ray, keeps one padding from its members and the paths
+  between them, bends along a curve of radius 1500px between them, and
+  eases onto the end members, so it has no horns. `GroupBand` gained
+  `outline`, and `outlinePath` turns it into an SVG path; the radii and
+  angles stay, as the slice the outline lies in. Cut boxes (strategy
+  C) were dropped. Tests that pinned the old rule were rewritten:
+  five of eight and four of six are boxes now, the Krebs cycle turns
+  to lay its two-node group flat, and the band tests use a hub outside
+  a four-of-six group. No layout snapshot changed.

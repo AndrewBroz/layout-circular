@@ -138,16 +138,17 @@ Each group comes back as one of two shapes, told apart by `kind`:
 - `kind: 'box'` is a rectangle. It has a center `x`, `y`, a `width` and
   a `height`. `titleSide` says whether its title goes at the top or the
   bottom.
-- `kind: 'band'` is a curved strip that follows the ring. It lies
-  between `innerRadius` and `outerRadius` around `center`, and runs
-  clockwise from `startAngle` to `endAngle`.
+- `kind: 'band'` is a curved strip that follows the ring. Its wall is
+  `outline`, a closed polygon, and `outlinePath(outline)` turns it into
+  an SVG path. It lies between `innerRadius` and `outerRadius` around
+  `center`, and runs clockwise from `startAngle` to `endAngle`.
 
 | `kind: 'box'` | `kind: 'band'` |
 | --- | --- |
 | <img src="docs/media/lifecycle-box.svg" width="291" alt="Eight boxes on a circle. Build and Test sit inside a gray box titled Make, at the bottom right."> | <img src="docs/media/lifecycle-band.svg" width="340" alt="The same eight boxes on a circle. A gray curved strip titled Funded wraps six of them, from Spec to Monitor."> |
 
-A group becomes a band when it covers half the ring or more. A
-rectangle around that much of a circle would cover its middle.
+A group becomes a band only when no box around it clears at any turn,
+for example when a box would cover a hub that is not in the group.
 
 Every shape has a `title` point, the center of its title.
 `groupBounds(shape)` gives any shape's bounding box. `groupsClear` is

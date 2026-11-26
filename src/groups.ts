@@ -3,21 +3,24 @@
  *
  * A designer keeps the regular polygon and moves the frame, not the
  * pieces. So the ring keeps its equal gaps, its one radius and its
- * mirror symmetry, and no gap is ever widened for a group. Three
+ * mirror symmetry, and no gap is ever widened for a group. Four
  * cheap moves make room instead:
  *
  * 1. Tight shapes. A box hugs its members, and the arcs between them,
  *    with the renderer's own padding: side room, and title room on top.
- * 2. Turn the ring. Any node may take the top, or the half-step
+ * 2. Title room below. A box whose top would meet an outside node may
+ *    carry its title room at the bottom instead.
+ * 3. Turn the ring. Any node may take the top, or the half-step
  *    between two nodes may, which is still mirror-symmetric. A group
  *    then sits balanced about an axis, where an axis-aligned box fits
  *    snugly: a two-node group becomes one flat side of the polygon.
- * 3. Grow the radius uniformly, only as far as clearance needs.
+ * 4. Grow the radius uniformly, only as far as clearance needs.
  *
- * A group whose members span half the ring or more is drawn as a
- * band that follows the ring, an annular sector, and so is everything
- * nested in it. A rectangle around that much of a circle covers the
- * middle, and no turn or growth changes that.
+ * Every group starts as a box. Among the turns that clear, the ones
+ * whose shapes are tight win, then the least turned. A group becomes a
+ * band that follows the ring only when no box around it clears at any
+ * turn. The shape is chosen by fit alone, never by how much of the ring
+ * a group covers.
  */
 import type { CircularLayoutResult, LayoutNodeInput, Point } from './layout.js';
 
@@ -65,15 +68,18 @@ export interface GroupBox {
   title: Point;
 }
 
-/** A group drawn as a band along the ring: the part of the annulus
- *  between two radii, swept clockwise from `startAngle` to `endAngle`.
- *  Angles are in the nodes' frame, as `PlacedNode.angle` is. */
+/** A group drawn as a band along the ring. Its wall is `outline`. The
+ *  radii and angles give the slice of the annulus the outline lies in,
+ *  swept clockwise from `startAngle` to `endAngle`. Angles are in the
+ *  nodes' frame, as `PlacedNode.angle` is. */
 export interface GroupBand {
   kind: 'band';
   id: string;
   /** Center of the ring the band follows. */
   center: Point;
+  /** The outline's least distance from `center`. */
   innerRadius: number;
+  /** The outline's greatest distance from `center`. */
   outerRadius: number;
   startAngle: number;
   /** Greater than `startAngle`, by less than a full turn. */
@@ -81,6 +87,12 @@ export interface GroupBand {
   /** Center of the title, which reads horizontally: just outside the
    *  band's outer edge, on the ray through its middle. */
   title: Point;
+  /** The band's wall, a closed polygon: the outer wall from
+   *  `startAngle` to `endAngle`, then the inner wall back. Each wall
+   *  keeps the padding from every member and from the paths between
+   *  members, and bends gently between them. The ends round onto the
+   *  end members. `outlinePath` turns it into an SVG path. */
+  outline: Point[];
 }
 
 export type GroupShape = GroupBox | GroupBand;
@@ -140,6 +152,27 @@ const TITLE_GAP = 6;
  *  and 15% is about where a grown ring starts to read as roomier than
  *  its neighbors' spacing. Within it, the least turn wins. */
 const CHEAP_GROWTH = 1.15;
+
+/** Among the turns that clear, how much more area than the tightest
+ *  turn's shapes still counts as tight: 30%. In the prototype gallery
+ *  a 30% margin kept the snug turns and dropped the boxes that sprawl
+ *  diagonally over empty space. */
+const AREA_SLACK = 1.3;
+
+/** When only grown turns clear, how far past the least grown radius
+ *  still counts as least grown: 5%, so a turn that is tighter or turns
+ *  less is not lost to a few pixels of growth. */
+const GROWTH_SLACK = 1.05;
+
+/** How sharply a band's wall may bend between its members: the radius
+ *  of the curve it hangs on, px. At 1500 the walls read as arcs near
+ *  the ring's own; the prototype's 100 kept the padding exactly but
+ *  pinched between nodes like a blob. */
+const BEND = 1500;
+
+/** Angular steps a band's wall is traced in, around the whole circle:
+ *  half a degree each, fine enough that the outline reads as a curve. */
+const BAND_STEPS = 720;
 
 /** How many times a box that will not clear is redrawn as a band,
  *  with everything above and below it, before giving up. */
@@ -227,29 +260,34 @@ export const groupTreeOf = (
 const wrap = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 
 /** The axis-aligned bounds of a group's shape. */
-export const groupBounds = (g: GroupShape): Bounds => {
+export const groupBounds = (g: GroupShape): Bounds =>
+  g.kind === 'box'
+    ? {
+        minX: g.x - g.width / 2,
+        minY: g.y - g.height / 2,
+        maxX: g.x + g.width / 2,
+        maxY: g.y + g.height / 2,
+      }
+    : boundsOf(g.outline);
+
+/** An SVG path through a band's outline, closed, moved by (dx, dy).
+ *  Coordinates are rounded to 0.01px. */
+export const outlinePath = (outline: Point[], dx = 0, dy = 0): string => {
+  const f = (v: number) => (Math.round(v * 100) / 100 || 0).toString();
+  return outline.map((p, i) => `${i === 0 ? 'M' : 'L'}${f(p.x + dx)},${f(p.y + dy)}`).join('') + 'Z';
+};
+
+/** The area a shape covers, px². Turns are ranked by it. */
+const areaOf = (g: GroupShape): number => {
   if (g.kind === 'box') {
-    return {
-      minX: g.x - g.width / 2,
-      minY: g.y - g.height / 2,
-      maxX: g.x + g.width / 2,
-      maxY: g.y + g.height / 2,
-    };
+    return g.width * g.height;
   }
-  // The extremes are at the four corners, or where the outer arc
-  // crosses an axis inside the sweep.
-  const points: Point[] = [];
-  const at = (r: number, a: number) =>
-    points.push({ x: g.center.x + r * Math.cos(a), y: g.center.y + r * Math.sin(a) });
-  for (const a of [g.startAngle, g.endAngle]) {
-    at(g.innerRadius, a);
-    at(g.outerRadius, a);
-  }
-  const first = Math.ceil(g.startAngle / (Math.PI / 2));
-  for (let k = first; k * (Math.PI / 2) <= g.endAngle; k++) {
-    at(g.outerRadius, k * (Math.PI / 2));
-  }
-  return boundsOf(points);
+  let twice = 0;
+  g.outline.forEach((p, i) => {
+    const q = g.outline[(i + 1) % g.outline.length]!;
+    twice += p.x * q.y - q.x * p.y;
+  });
+  return Math.abs(twice) / 2;
 };
 
 const boundsOf = (points: Point[]): Bounds => ({
@@ -310,45 +348,35 @@ const toSegment = (p: Point, a: Point, b: Point): number => {
   return Math.hypot(p.x - a.x - t * vx, p.y - a.y - t * vy);
 };
 
+/** A band as a region: its outline, a closed polygon. */
 const bandRegion = (g: GroupBand): Region => {
-  const { center, innerRadius: rIn, outerRadius: rOut, startAngle, endAngle } = g;
-  const sweep = endAngle - startAngle;
-  const at = (r: number, a: number): Point => ({
-    x: center.x + r * Math.cos(a),
-    y: center.y + r * Math.sin(a),
-  });
+  const pts = g.outline;
   return cached({
-    bounds: groupBounds(g),
+    bounds: boundsOf(pts),
     wall: () => {
       const out: Point[] = [];
-      for (const r of rIn > 0 ? [rIn, rOut] : [rOut]) {
-        const steps = Math.max(1, Math.ceil((r * sweep) / SAMPLE));
-        for (let i = 0; i <= steps; i++) {
-          out.push(at(r, startAngle + (sweep * i) / steps));
-        }
-      }
-      along(at(rIn, startAngle), at(rOut, startAngle), out);
-      along(at(rIn, endAngle), at(rOut, endAngle), out);
+      pts.forEach((p, i) => along(p, pts[(i + 1) % pts.length]!, out));
       return out;
     },
     distance: (p) => {
-      const rho = Math.hypot(p.x - center.x, p.y - center.y);
-      const into = (((Math.atan2(p.y - center.y, p.x - center.x) - startAngle) % TAU) + TAU) % TAU;
-      if (into <= sweep) {
-        const radial = Math.max(rIn - rho, rho - rOut);
-        if (radial > 0) {
-          return radial;
+      // Squared distance to the nearest wall segment, rooted once.
+      let d2 = Infinity;
+      let inside = false;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i]!;
+        const b = pts[j]!;
+        const vx = b.x - a.x;
+        const vy = b.y - a.y;
+        const len2 = vx * vx + vy * vy;
+        const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2));
+        d2 = Math.min(d2, (p.x - a.x - t * vx) ** 2 + (p.y - a.y - t * vy) ** 2);
+        // Even-odd: a ray to the right crosses the wall an odd number
+        // of times from inside.
+        if (a.y > p.y !== b.y > p.y && p.x < (vx * (p.y - a.y)) / vy + a.x) {
+          inside = !inside;
         }
-        // Inside: the nearest wall, an arc or an end ray.
-        const toStart = rho * Math.sin(Math.min(into, Math.PI / 2));
-        const toEnd = rho * Math.sin(Math.min(sweep - into, Math.PI / 2));
-        return -Math.min(rho - rIn, rOut - rho, toStart, toEnd);
       }
-      // Outside the sweep the nearest point lies on an end.
-      return Math.min(
-        toSegment(p, at(rIn, startAngle), at(rOut, startAngle)),
-        toSegment(p, at(rIn, endAngle), at(rOut, endAngle))
-      );
+      return inside ? -Math.sqrt(d2) : Math.sqrt(d2);
     },
   });
 };
@@ -385,6 +413,8 @@ interface Fitted {
   clashing: Set<string>;
   /** Pixels added to every gap. */
   grow: number;
+  /** Boxes whose title room is at the bottom, to clear an outside node. */
+  bottom: Set<string>;
 }
 
 /**
@@ -414,34 +444,14 @@ export const fitGroups = (
     spurParents: new Map(),
   });
 
-  // Which groups are bands: those whose members span half the ring
-  // or more, decided once, since a turn moves no seat relative to
-  // another.
+  // The unturned, ungrown ring: its seats and radius are what every
+  // turn and growth is measured against.
   const probeFit = fit(0, false, 0);
   const probe = solve(probeFit);
   const n = probe.order.length;
   const seatOf = seatsOf(probe, probeFit.spurParents);
+  // Every group starts as a box.
   let bands = new Set<string>();
-  for (const g of tree.ids) {
-    const seats = [
-      ...new Set(subtree.get(g)!.flatMap((m) => seatOf(m.id) ?? [])),
-    ].sort((a, b) => a - b);
-    if (seats.length < 2 || seats.length === n) {
-      // One seat is no arc. A group holding every seat has nothing on
-      // the ring outside it, so a box covers only its own middle.
-      continue;
-    }
-    let widestGap = n - seats[seats.length - 1]! + seats[0]!;
-    for (let i = 1; i < seats.length; i++) {
-      widestGap = Math.max(widestGap, seats[i]! - seats[i - 1]!);
-    }
-    // The steps from the first member's seat to the last's.
-    const span = n - widestGap;
-    if (2 * span >= n) {
-      bands.add(g);
-    }
-  }
-  bands = closed(bands, tree, children);
 
   const seatless = new Set(nodes.filter((m) => seatOf(m.id) === undefined).map((m) => m.id));
   const shapesOf = (result: CircularLayoutResult, bandSet: Set<string>, bottom?: Set<string>) =>
@@ -507,6 +517,35 @@ export const fitGroups = (
     return { residual, worst, clashing };
   };
 
+  /**
+   * The shapes for one solve, each clashing box with its title room
+   * moved to the bottom where that clashes less. Boxes are tried one
+   * at a time, in input order, so a box whose top is clear keeps its
+   * title on top.
+   */
+  const titlesLowered = (result: CircularLayoutResult, bandSet: Set<string>) => {
+    let bottom = new Set<string>();
+    let shapes = shapesOf(result, bandSet);
+    let clashes = clashesOf(result, shapes, bandSet);
+    for (const g of tree.ids) {
+      if (clashes.residual === 0) {
+        break;
+      }
+      if (!clashes.clashing.has(g)) {
+        continue;
+      }
+      const tried = new Set([...bottom, g]);
+      const low = shapesOf(result, bandSet, tried);
+      const lowClashes = clashesOf(result, low, bandSet);
+      if (lowClashes.residual < clashes.residual) {
+        bottom = tried;
+        shapes = low;
+        clashes = lowClashes;
+      }
+    }
+    return { shapes, bottom, ...clashes };
+  };
+
   const base = probe.radius;
   let solves = 0;
 
@@ -525,10 +564,8 @@ export const fitGroups = (
     for (let round = 0; ; round++) {
       solves++;
       const result = solve(fit(turn, halfStep, grow));
-      const shapes = shapesOf(result, bandSet);
-      const { residual, worst, clashing } = clashesOf(result, shapes, bandSet);
-      const done = { result, shapes, residual, worst, clashing, grow };
-      if (residual === 0 || capped || round >= GROW_ROUNDS || solves >= SOLVE_BUDGET) {
+      const done = { result, grow, ...titlesLowered(result, bandSet) };
+      if (done.residual === 0 || capped || round >= GROW_ROUNDS || solves >= SOLVE_BUDGET) {
         return done;
       }
       if (result.radius > cap) {
@@ -543,7 +580,7 @@ export const fitGroups = (
       }
       // Most of the deepest clash, at least 4px a gap: the next solve
       // usually clears it without overshooting by much.
-      grow += Math.max(4, worst * 0.6);
+      grow += Math.max(4, done.worst * 0.6);
     }
   };
 
@@ -561,63 +598,64 @@ export const fitGroups = (
   // Least turned first, so a tie keeps the smaller turn.
   turns.sort((a, b) => turned(a.turn, a.halfStep) - turned(b.turn, b.halfStep));
 
+  const areaIn = (f: Fitted) => [...f.shapes.values()].reduce((sum, g) => sum + areaOf(g), 0);
+
   /**
-   * The turn, ranked rotation first. Among the turns that clear within
-   * CHEAP_GROWTH, the least turned wins, then the least grown. When
-   * none does, the least grown turn that clears within GROW_CAP wins,
-   * then the least turned. When none clears at all, the shallowest
-   * clash wins, so the flag goes up on the best there is. Turns are
-   * tried least turned first, so the first cheap clear ends the search
-   * once its equally turned twins are checked.
+   * The best of the turns that clear. When `grown` is set, only turns
+   * within GROWTH_SLACK of the least radius are kept first. Then the
+   * turns whose shapes cover at most AREA_SLACK times the least area,
+   * and of those the least turned, then the least grown.
+   */
+  const tightest = (clear: { fitted: Fitted; amount: number }[], grown: boolean): Fitted => {
+    let pool = clear;
+    if (grown) {
+      const least = Math.min(...pool.map((c) => c.fitted.result.radius));
+      pool = pool.filter((c) => c.fitted.result.radius <= least * GROWTH_SLACK);
+    }
+    const least = Math.min(...pool.map((c) => areaIn(c.fitted)));
+    pool = pool.filter((c) => areaIn(c.fitted) <= least * AREA_SLACK);
+    pool.sort((a, b) => a.amount - b.amount || a.fitted.result.radius - b.fitted.result.radius);
+    return pool[0]!.fitted;
+  };
+
+  /**
+   * The turn. Every turn is grown up to CHEAP_GROWTH, and the tightest
+   * of those that clear wins. When none clears, every turn is grown on
+   * up to GROW_CAP, and the tightest of those that clear wins, the
+   * least grown first. When none clears at all, the shallowest clash
+   * wins, so the flag goes up on the best there is. Past the solve
+   * budget, the turns already tried are ranked as they stand.
    */
   const search = (bandSet: Set<string>): Fitted => {
     const cheap = new Map<string, Fitted>();
-    let best: { fitted: Fitted; rank: number[] } | undefined;
-    // Lexicographic: the first entry that differs decides.
-    const consider = (fitted: Fitted, rank: number[]) => {
-      const i = best ? rank.findIndex((v, k) => Math.abs(v - best!.rank[k]!) > 1e-9) : -1;
-      if (!best || (i >= 0 && rank[i]! < best.rank[i]!)) {
-        best = { fitted, rank };
-      }
-    };
+    const clear: { fitted: Fitted; amount: number }[] = [];
     for (const { turn, halfStep } of turns) {
-      const amount = turned(turn, halfStep);
-      if (best && amount > best.rank[0]! + 1e-9) {
-        return best.fitted;
-      }
       if (solves >= SOLVE_BUDGET && cheap.size > 0) {
         break;
       }
       const fitted = grown(turn, halfStep, bandSet, CHEAP_GROWTH);
       cheap.set(`${turn} ${halfStep}`, fitted);
       if (fitted.residual === 0) {
-        consider(fitted, [amount, fitted.result.radius / base]);
+        clear.push({ fitted, amount: turned(turn, halfStep) });
       }
     }
-    if (best) {
-      return best.fitted;
+    if (clear.length > 0) {
+      return tightest(clear, false);
     }
+    let shallowest: Fitted | undefined;
     for (const { turn, halfStep } of turns) {
       const first = cheap.get(`${turn} ${halfStep}`);
       if (!first) {
         continue;
       }
-      if (solves >= SOLVE_BUDGET) {
-        // Out of budget: rank what pass 1 found for this turn as is.
-        // It did not clear, or the search would have ended there.
-        consider(first, [1, first.residual, turned(turn, halfStep)]);
-        continue;
+      const fitted = solves >= SOLVE_BUDGET ? first : grown(turn, halfStep, bandSet, GROW_CAP, first.grow);
+      if (fitted.residual === 0) {
+        clear.push({ fitted, amount: turned(turn, halfStep) });
+      } else if (!shallowest || fitted.residual < shallowest.residual) {
+        shallowest = fitted;
       }
-      const fitted = grown(turn, halfStep, bandSet, GROW_CAP, first.grow);
-      const amount = turned(turn, halfStep);
-      consider(
-        fitted,
-        fitted.residual === 0
-          ? [0, fitted.result.radius / base, amount]
-          : [1, fitted.residual, amount]
-      );
     }
-    return best!.fitted;
+    return clear.length > 0 ? tightest(clear, true) : shallowest!;
   };
 
   /**
@@ -670,11 +708,17 @@ export const fitGroups = (
       const strip = { minX: b.minX + pad.left, minY: top, maxX: b.maxX - pad.right, maxY: top + height };
       return among.some((line) => crosses(line, strip));
     };
-    let bottom = new Set<string>();
+    let bottom = fitted.bottom;
     let shapes = fitted.shapes;
     for (const g of tree.ids) {
       const shape = shapes.get(g);
-      if (!shape || shape.kind !== 'box' || tree.padding.get(g)!.top <= 0 || !stripCrossed(shape, g, cutting)) {
+      if (
+        !shape ||
+        shape.kind !== 'box' ||
+        shape.titleSide === 'bottom' ||
+        tree.padding.get(g)!.top <= 0 ||
+        !stripCrossed(shape, g, cutting)
+      ) {
         continue;
       }
       const tried = new Set([...bottom, g]);
@@ -699,10 +743,9 @@ export const fitGroups = (
   };
 
   let pick = search(bands);
-  // A box that clears at no turn becomes a band, as a group spanning
-  // half the ring does.
-  // A retry stands only if it clashes less, and none starts once the
-  // budget is spent.
+  // A box that clears at no turn becomes a band, with everything above
+  // and below it. A retry stands only if it clashes less, and none
+  // starts once the budget is spent.
   let pickBands = bands;
   for (let tries = 0; pick.residual > 0 && tries < BAND_TRIES && solves < SOLVE_BUDGET; tries++) {
     const more = closed(new Set([...bands, ...pick.clashing]), tree, children);
@@ -837,9 +880,7 @@ const crosses = (line: Point[], r: Bounds): boolean => {
 /**
  * Every group's shape, deepest first, so a parent wraps its children.
  * A box is its members, the paths between them and its child boxes,
- * padded. A band is the slice of
- * the annulus that holds its members, its child bands and their
- * titles, padded: its ends keep the side padding, its arcs the bottom.
+ * padded. A band is drawn by `bandOf`.
  */
 const placeShapes = (
   nodes: LayoutNodeInput[],
@@ -909,107 +950,308 @@ const placeShapes = (
       continue;
     }
 
-    // The band's middle: opposite the widest empty arc between its
-    // nodes, so the sweep is measured around the members, not across
-    // the gap.
-    const angles = subtree
-      .get(g)!
-      .filter((n) => !seatless.has(n.id))
-      .map((n) => Math.atan2(at.get(n.id)!.y, at.get(n.id)!.x))
-      .sort((a, b) => a - b);
-    let middle = angles[0]!;
-    if (angles.length > 1) {
-      let gapAt = angles[angles.length - 1]!;
-      let widest = TAU - (angles[angles.length - 1]! - angles[0]!);
-      for (let i = 1; i < angles.length; i++) {
-        if (angles[i]! - angles[i - 1]! > widest) {
-          widest = angles[i]! - angles[i - 1]!;
-          gapAt = angles[i - 1]!;
-        }
-      }
-      middle = wrap(gapAt + widest / 2 + Math.PI);
+    const band = bandOf(g, tree, subtree, kids, own, result, seatless, at);
+    if (band) {
+      shapes.set(g, band);
     }
-
-    // What the band holds: member corners, child band corners, and
-    // child titles' corners.
-    const corners: Point[] = [];
-    let near = Infinity;
-    let far = 0;
-    for (const r of own) {
-      corners.push(
-        { x: r.minX, y: r.minY },
-        { x: r.maxX, y: r.minY },
-        { x: r.minX, y: r.maxY },
-        { x: r.maxX, y: r.maxY }
-      );
-      // The nearest point of the rect to the center.
-      near = Math.min(
-        near,
-        Math.hypot(Math.min(Math.max(0, r.minX), r.maxX), Math.min(Math.max(0, r.minY), r.maxY))
-      );
-    }
-    for (const k of kids) {
-      if (k.kind !== 'band') {
-        continue;
-      }
-      for (const a of [k.startAngle, k.endAngle]) {
-        for (const r of [k.innerRadius, k.outerRadius]) {
-          corners.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
-        }
-      }
-      near = Math.min(near, k.innerRadius);
-      far = Math.max(far, k.outerRadius);
-      const t = titleBounds(k, tree.title.get(k.id)!);
-      corners.push(
-        { x: t.minX, y: t.minY },
-        { x: t.maxX, y: t.minY },
-        { x: t.minX, y: t.maxY },
-        { x: t.maxX, y: t.maxY }
-      );
-    }
-    // Each end keeps the side padding from every corner: a corner ρ
-    // from the center clears the end's ray by ρ·sin(Δ).
-    const side = Math.max(pad.left, pad.right);
-    let from = Infinity;
-    let to = -Infinity;
-    for (const c of corners) {
-      const rho = Math.hypot(c.x, c.y);
-      const rel = wrap(Math.atan2(c.y, c.x) - middle);
-      const room = rho > 0 ? Math.asin(Math.min(1, side / rho)) : Math.PI / 2;
-      from = Math.min(from, rel - room);
-      to = Math.max(to, rel + room);
-      far = Math.max(far, rho);
-    }
-    // A sweep can't close the circle; past that the band clashes with
-    // whatever it would have wrapped, and the clash test says so.
-    const most = TAU - 1e-6;
-    if (to - from > most) {
-      const mid = (from + to) / 2;
-      from = mid - most / 2;
-      to = mid + most / 2;
-    }
-    const startAngle = wrap(middle + from);
-    const endAngle = startAngle + (to - from);
-    const innerRadius = Math.max(0, near - pad.bottom);
-    const outerRadius = far + pad.bottom;
-    const size = tree.title.get(g)!;
-    const titleAt = (startAngle + endAngle) / 2;
-    const dx = Math.cos(titleAt);
-    const dy = Math.sin(titleAt);
-    // The title box's half-depth along the ray, so its nearest side
-    // keeps TITLE_GAP from the band's outer edge.
-    const reach = (Math.abs(dx) * size.width + Math.abs(dy) * size.height) / 2;
-    const rho = outerRadius + TITLE_GAP + reach;
-    shapes.set(g, {
-      kind: 'band',
-      id: g,
-      center: { x: 0, y: 0 },
-      innerRadius,
-      outerRadius,
-      startAngle,
-      endAngle,
-      title: { x: rho * dx, y: rho * dy },
-    });
   }
   return shapes;
+};
+
+/** Where a ray from the center along the unit vector (ux, uy) meets a
+ *  rect grown by a disc of radius p, as [near, far] distances, or
+ *  undefined when it misses. The grown rect is the rect's two
+ *  crosswise slabs plus a disc at each corner. */
+const rayHitsPadded = (ux: number, uy: number, r: Bounds, p: number): [number, number] | undefined => {
+  let lo = Infinity;
+  let hi = -Infinity;
+  const slab = (b: Bounds) => {
+    let t0 = -Infinity;
+    let t1 = Infinity;
+    for (const [u, min, max] of [
+      [ux, b.minX, b.maxX],
+      [uy, b.minY, b.maxY],
+    ] as const) {
+      if (Math.abs(u) < 1e-12) {
+        if (min > 0 || max < 0) {
+          return;
+        }
+      } else {
+        t0 = Math.max(t0, Math.min(min / u, max / u));
+        t1 = Math.min(t1, Math.max(min / u, max / u));
+      }
+    }
+    if (t1 >= Math.max(t0, 0)) {
+      lo = Math.min(lo, Math.max(t0, 0));
+      hi = Math.max(hi, t1);
+    }
+  };
+  slab({ minX: r.minX - p, minY: r.minY, maxX: r.maxX + p, maxY: r.maxY });
+  slab({ minX: r.minX, minY: r.minY - p, maxX: r.maxX, maxY: r.maxY + p });
+  for (const c of [
+    { x: r.minX, y: r.minY },
+    { x: r.maxX, y: r.minY },
+    { x: r.minX, y: r.maxY },
+    { x: r.maxX, y: r.maxY },
+  ]) {
+    const hit = rayHitsDisc(ux, uy, c, p);
+    if (hit) {
+      lo = Math.min(lo, hit[0]);
+      hi = Math.max(hi, hit[1]);
+    }
+  }
+  return hi >= lo ? [lo, hi] : undefined;
+};
+
+/** Where a ray from the center along (ux, uy) meets the disc of radius
+ *  p around c, as [near, far], or undefined when it misses. */
+const rayHitsDisc = (ux: number, uy: number, c: Point, p: number): [number, number] | undefined => {
+  const along = c.x * ux + c.y * uy;
+  const disc = p * p - (c.x * c.x + c.y * c.y) + along * along;
+  if (disc < 0 || along + Math.sqrt(disc) < 0) {
+    return undefined;
+  }
+  return [Math.max(0, along - Math.sqrt(disc)), along + Math.sqrt(disc)];
+};
+
+/**
+ * A band that follows the ring and keeps one padding, the largest of
+ * the side and bottom paddings, from everything it holds: its members,
+ * the paths between them, its child bands and their titles. Its walls
+ * are traced ray by ray from the center. Between the end members each
+ * wall hangs on a curve of radius BEND drawn over everything it holds,
+ * so it bends gently instead of pinching between nodes. Past each end
+ * member's middle the wall eases from that curve onto the member's
+ * padding, so the end is round, with no horn. Undefined when the group
+ * has nothing on the ring.
+ */
+const bandOf = (
+  g: string,
+  tree: GroupTree,
+  subtree: Map<string, LayoutNodeInput[]>,
+  kids: GroupShape[],
+  own: Bounds[],
+  result: CircularLayoutResult,
+  seatless: Set<string>,
+  at: Map<string, Point>
+): GroupBand | undefined => {
+  const pad = tree.padding.get(g)!;
+  const p = Math.max(pad.left, pad.right, pad.bottom);
+  const members = subtree.get(g)!.filter((n) => !seatless.has(n.id) && at.has(n.id));
+  if (members.length === 0) {
+    return undefined;
+  }
+  // The band's middle: opposite the widest empty arc between its
+  // members, so the sweep is measured around them, not across the gap.
+  const angles = members.map((n) => Math.atan2(at.get(n.id)!.y, at.get(n.id)!.x)).sort((a, b) => a - b);
+  let gapAt = angles[angles.length - 1]!;
+  let widest = TAU - (angles[angles.length - 1]! - angles[0]!);
+  for (let i = 1; i < angles.length; i++) {
+    if (angles[i]! - angles[i - 1]! > widest) {
+      widest = angles[i]! - angles[i - 1]!;
+      gapAt = angles[i - 1]!;
+    }
+  }
+  const middle = wrap(gapAt + widest / 2 + Math.PI);
+  const rel = (q: Point) => wrap(Math.atan2(q.y, q.x) - middle);
+
+  // What the band holds: rects and points, each padded by p. The end
+  // members' middles bound the hung part of the walls.
+  const rects: Bounds[] = [...own];
+  const points: Point[] = [];
+  let c0 = Infinity;
+  let c1 = -Infinity;
+  for (const n of members) {
+    c0 = Math.min(c0, rel(at.get(n.id)!));
+    c1 = Math.max(c1, rel(at.get(n.id)!));
+  }
+  for (const k of kids) {
+    if (k.kind !== 'band') {
+      continue;
+    }
+    for (const q of k.outline) {
+      points.push(q);
+      c0 = Math.min(c0, rel(q));
+      c1 = Math.max(c1, rel(q));
+    }
+    rects.push(titleBounds(k, tree.title.get(k.id)!));
+  }
+  const inside = new Set(members.map((n) => n.id));
+  for (const e of result.edges) {
+    if (inside.has(e.start) && inside.has(e.end)) {
+      points.push(...e.points);
+    }
+  }
+  // The members' mean distance from the center turns an angle into an
+  // arc length along the ring, for the hung curve's sag.
+  const ring = members.reduce((sum, n) => sum + Math.hypot(at.get(n.id)!.x, at.get(n.id)!.y), 0) / members.length;
+
+  // On each ray, the nearest and farthest padded point the band holds.
+  const phi = (k: number) => -Math.PI + (TAU * k) / BAND_STEPS;
+  const hugIn: number[] = [];
+  const hugOut: number[] = [];
+  for (let k = 0; k < BAND_STEPS; k++) {
+    const ux = Math.cos(middle + phi(k));
+    const uy = Math.sin(middle + phi(k));
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const hit of [
+      ...rects.map((r) => rayHitsPadded(ux, uy, r, p)),
+      ...points.map((q) => rayHitsDisc(ux, uy, q, p)),
+    ]) {
+      if (hit) {
+        lo = Math.min(lo, hit[0]);
+        hi = Math.max(hi, hit[1]);
+      }
+    }
+    hugIn.push(lo);
+    hugOut.push(hi);
+  }
+
+  // Each wall at each ray: the hung curve over every padded point
+  // between the end members' middles, never inside the padding. The
+  // curve sags a·(k − j)² from the point on ray j at ray k.
+  const k0 = Math.ceil(((c0 + Math.PI) / TAU) * BAND_STEPS);
+  const k1 = Math.floor(((c1 + Math.PI) / TAU) * BAND_STEPS);
+  const a = (ring * (TAU / BAND_STEPS)) ** 2 / (2 * BEND);
+  const hung: number[] = [];
+  for (let j = k0; j <= k1; j++) {
+    if (Number.isFinite(hugOut[j]!)) {
+      hung.push(j);
+    }
+  }
+  const outEnvelope = lowestParabolas(hung, (j) => -hugOut[j]! / a, BAND_STEPS);
+  const inEnvelope = lowestParabolas(hung, (j) => hugIn[j]! / a, BAND_STEPS);
+  const inR: number[] = [];
+  const outR: number[] = [];
+  for (let k = 0; k < BAND_STEPS; k++) {
+    const hungOut = -a * outEnvelope[k]!;
+    const hungIn = a * inEnvelope[k]!;
+    if (k >= k0 && k <= k1) {
+      outR.push(Math.max(hugOut[k]!, hungOut));
+      inR.push(Math.min(hugIn[k]!, hungIn));
+    } else if (Number.isFinite(hugOut[k]!)) {
+      // Past an end member's middle: a half-cosine from the hung curve
+      // at the middle down to the padding at the end.
+      const dir = k < k0 ? -1 : 1;
+      let end = k;
+      while (Number.isFinite(hugOut[end + dir] ?? NaN)) {
+        end += dir;
+      }
+      const from = k < k0 ? k0 : k1;
+      const t = Math.min(1, Math.abs(k - from) / Math.max(1, Math.abs(end - from)));
+      const w = Number.isFinite(hungOut) ? (1 + Math.cos(Math.PI * t)) / 2 : 0;
+      outR.push(Math.max(hugOut[k]!, hugOut[k]! + (hungOut - hugOut[k]!) * w));
+      inR.push(Math.min(hugIn[k]!, hugIn[k]! + (hungIn - hugIn[k]!) * w));
+    } else {
+      outR.push(NaN);
+      inR.push(NaN);
+    }
+  }
+  let first = k0;
+  while (first > 0 && Number.isFinite(outR[first - 1]!)) {
+    first--;
+  }
+  let last = k1;
+  while (last < BAND_STEPS - 1 && Number.isFinite(outR[last + 1]!)) {
+    last++;
+  }
+  const outer: Point[] = [];
+  const inner: Point[] = [];
+  for (let k = first; k <= last; k++) {
+    const a = middle + phi(k);
+    outer.push({ x: outR[k]! * Math.cos(a), y: outR[k]! * Math.sin(a) });
+    const r = Math.max(0, inR[k]!);
+    inner.push({ x: r * Math.cos(a), y: r * Math.sin(a) });
+  }
+  const startAngle = wrap(middle + phi(first));
+  const endAngle = startAngle + (phi(last) - phi(first));
+  // The title on the ray through the band's middle, its nearest side
+  // TITLE_GAP beyond the outer wall there.
+  const mid = Math.round((first + last) / 2);
+  const size = tree.title.get(g)!;
+  const titleAt = middle + phi(mid);
+  const dx = Math.cos(titleAt);
+  const dy = Math.sin(titleAt);
+  const reach = (Math.abs(dx) * size.width + Math.abs(dy) * size.height) / 2;
+  const rho = outR[mid]! + TITLE_GAP + reach;
+  return {
+    kind: 'band',
+    id: g,
+    center: { x: 0, y: 0 },
+    innerRadius: Math.max(0, Math.min(...inR.slice(first, last + 1))),
+    outerRadius: Math.max(...outR.slice(first, last + 1)),
+    startAngle,
+    endAngle,
+    title: { x: rho * dx, y: rho * dy },
+    outline: simplified([...outer, ...inner.reverse()]),
+  };
+};
+
+/**
+ * For each k from 0 to n − 1, the least of (k − j)² + f(j) over the
+ * given js, in ascending order: the lower envelope of parabolas, in one
+ * pass (Felzenszwalb and Huttenlocher's distance transform). Infinity
+ * everywhere when js is empty.
+ */
+const lowestParabolas = (js: number[], f: (j: number) => number, n: number): number[] => {
+  const out = new Array<number>(n).fill(Infinity);
+  if (js.length === 0) {
+    return out;
+  }
+  // The parabolas on the envelope, and where each starts to be lowest.
+  const v: number[] = [js[0]!];
+  const z: number[] = [-Infinity];
+  for (const q of js.slice(1)) {
+    for (;;) {
+      const p = v[v.length - 1]!;
+      const cross = (f(q) + q * q - (f(p) + p * p)) / (2 * (q - p));
+      if (cross <= z[z.length - 1]!) {
+        v.pop();
+        z.pop();
+        continue;
+      }
+      v.push(q);
+      z.push(cross);
+      break;
+    }
+  }
+  let i = 0;
+  for (let k = 0; k < n; k++) {
+    while (i + 1 < v.length && z[i + 1]! < k) {
+      i++;
+    }
+    out[k] = (k - v[i]!) ** 2 + f(v[i]!);
+  }
+  return out;
+};
+
+/** How far a simplified outline may stray from the traced one, px: a
+ *  quarter pixel, below what a renderer draws. */
+const OUTLINE_TOLERANCE = 0.25;
+
+/** An outline with the points dropped that lie within
+ *  OUTLINE_TOLERANCE of the line between the points kept around them,
+ *  by Douglas and Peucker's method. The first and last points stay. */
+const simplified = (pts: Point[]): Point[] => {
+  const keep = new Array<boolean>(pts.length).fill(false);
+  keep[0] = keep[pts.length - 1] = true;
+  const spans: [number, number][] = [[0, pts.length - 1]];
+  for (let span = spans.pop(); span; span = spans.pop()) {
+    const [from, to] = span;
+    let far = -1;
+    let most = OUTLINE_TOLERANCE;
+    for (let i = from + 1; i < to; i++) {
+      const d = toSegment(pts[i]!, pts[from]!, pts[to]!);
+      if (d > most) {
+        most = d;
+        far = i;
+      }
+    }
+    if (far >= 0) {
+      keep[far] = true;
+      spans.push([from, far], [far, to]);
+    }
+  }
+  return pts.filter((_, i) => keep[i]);
 };
