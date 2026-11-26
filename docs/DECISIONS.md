@@ -217,3 +217,44 @@ before the move are recorded in its `docs/DECISIONS.md`.
   rings of mermaid-sized nodes, for the arcs plus padding. The Pele
   pictures in `docs/media` were drawn before this change; they show it
   after Pele picks up a release with it.
+- **2026-11-25 — Provisional: group shapes by fit, with the title
+  allowed below.** Pending the owner's judgment of renders, on branch
+  `feat/fit-groups`; not settled. The owner picked strategy B from a
+  prototype gallery, with one change. Every group starts as a box.
+  Among the turns that clear within 1.15 times the radius, those whose
+  shapes cover at most 1.3 times the tightest turn's area are kept,
+  then the least turned wins, then the least grown. When none clears,
+  every turn grows up to 1.5 times; the turns within 5% of the least
+  radius are kept first, then ranked the same way. A group becomes a
+  band only when no box clears. The rule "half the ring or more is a
+  band" is gone: shape follows fit, not the share of the ring. The
+  change: a clashing box may carry its title room at the bottom, but
+  only at a turn that does not clear with titles on top, so a title
+  never goes below just to save that turn some growth. A turn that
+  clears with titles on top within 1.15 times the radius bars every
+  larger turn from a title below, so the water cycle keeps its titles
+  on top, as the owner chose. Past that, a turn with a title below may
+  beat a smaller turn that clears with titles on top only through more
+  growth: in Pele's wheel, Learn on top with Deliver's title below
+  wins over the half-step beside Plan, which clears only at 1.19
+  times. The owner approved that picture. A lowered try counts only
+  when it clears; when nothing clears, the shallowest clash with
+  titles on top drives the band retry. Boxes are tried one at a time,
+  in input order, and a move stands only if it clashes less, so one of
+  two boxes can move its title while the other keeps it on top. In
+  Pele this keeps Idea on top of "Funded" instead of turning the ring
+  upside down. A band is main's annular sector, unchanged. Cut boxes
+  (strategy C) were dropped. Tests that pinned the old rule were
+  rewritten: five of eight and four of six are boxes now, the Krebs
+  cycle turns to lay its two-node group flat, and the band tests use a
+  hub outside a four-of-six group. No layout snapshot changed. Every
+  turn is now tried, so a ring that clears at once takes one solve a
+  turn, 64 for 32 nodes. A turn is grown with titles below only if
+  that clears at the growth its upright try reached, a check that
+  costs no solve. The solve budget rose from 400 to 500, so a 32-node
+  ring whose group clears only as a band, round a hub, has room to
+  find it (448 solves, about half a second); one that cannot clear
+  stops at about 0.4s. The README's band picture is now
+  `hub-band.svg`, a hub outside a four-of-six group, since six of
+  eight is a box under this rule. `lifecycle-band.svg` stays, since
+  the npm README still shows it.

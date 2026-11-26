@@ -82,7 +82,7 @@ const gallery: Case[] = [
     ],
     edges: cycle('P', 'D', 'C', 'T', 'R', 'V'),
     groups: [group('Engineering'), group('CI', 'Engineering')],
-    bands: ['Engineering', 'CI'],
+    bands: [],
   },
   {
     name: '4. a group of exactly half the ring, four of eight',
@@ -111,7 +111,7 @@ const gallery: Case[] = [
     ],
     edges: cycle('I', 'S', 'D', 'B', 'T', 'P', 'M', 'R'),
     groups: [group('Funded')],
-    bands: ['Funded'],
+    bands: [],
   },
   {
     name: '6. three groups around a ring of nine',
@@ -361,14 +361,15 @@ describe('group shapes, the book designer\'s way', () => {
     });
   }
 
-  it('keeps the first node on top when the groups already clear there', () => {
-    for (const i of [2, 4, 7]) {
-      const c = gallery[i]!;
-      const r = circularLayout(c.nodes, c.edges, {}, c.groups);
-      const top = r.nodes.find((p) => p.id === c.nodes[0]!.id)!;
-      expect(top.x, c.name).toBeCloseTo(0, 6);
-      expect(top.y, c.name).toBeLessThan(0);
-    }
+  it('turns the ring when that makes a box tight: two members lie flat', () => {
+    // Krebs: the unturned ring clears, but CII's box lies diagonally
+    // over empty space there. A turn that puts its two members level
+    // gives a box much less than 1.3 times the area, so it wins.
+    const c = gallery[7]!;
+    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+    const at = new Map(r.nodes.map((p) => [p.id, p]));
+    expect(at.get('E')!.y).toBeCloseTo(at.get('F')!.y, 6);
+    expectClear(r, c);
   });
 
   it('turns the ring as little as clears: a half-step beside the first node', () => {
@@ -406,7 +407,7 @@ describe('group shapes, the book designer\'s way', () => {
   });
 });
 
-describe('bands', () => {
+describe('shape by fit', () => {
   const ring = (n: number, members: number) => {
     const ids = Array.from({ length: n }, (_, i) => `N${i}`);
     return {
@@ -418,16 +419,20 @@ describe('bands', () => {
   const kindOf = (c: ReturnType<typeof ring>) =>
     circularLayout(c.nodes, c.edges, {}, c.groups).groups![0]!.kind;
 
-  it('draws a group whose ends span exactly half the ring as a band', () => {
-    // Five of eight: the first and last members sit opposite.
-    expect(kindOf(ring(8, 5))).toBe('band');
-    // Four of six, the same half.
-    expect(kindOf(ring(6, 4))).toBe('band');
+  it('boxes four of five: a box fits', () => {
+    const c = ring(5, 4);
+    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+    expect(r.groups![0]!.kind).toBe('box');
+    expectClear(r, c);
   });
 
-  it('keeps a box one seat short of half', () => {
-    expect(kindOf(ring(8, 4))).toBe('box');
-    expect(kindOf(ring(6, 3))).toBe('box');
+  it('boxes a group whatever share of the ring it covers, when a box clears', () => {
+    // Five of eight and four of six span half the ring: once bands.
+    for (const c of [ring(8, 5), ring(6, 4)]) {
+      const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+      expect(r.groups![0]!.kind).toBe('box');
+      expectClear(r, c);
+    }
   });
 
   it('boxes a group holding the whole ring: nothing on it lies outside', () => {
@@ -435,22 +440,51 @@ describe('bands', () => {
     c.nodes[0] = { ...c.nodes[0]!, group: 'G' };
     expect(kindOf(c)).toBe('box');
   });
+});
 
-  it('wraps its members with a band that follows the ring', () => {
-    const c = ring(8, 5);
+describe('bands', () => {
+  // A hub outside a group of four of six: any box around the four
+  // covers the middle, where the hub sits, at every turn and growth.
+  const ids = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const hubCase = (groups: LayoutGroupInput[] = [group('G')], inner?: string[]) => ({
+    nodes: [
+      ...ids.map((id) => node(id, 'Node', inner?.includes(id) ? 'I' : id <= 'D' ? 'G' : undefined)),
+      node('Hub', 'Hub'),
+    ],
+    edges: [...cycle(...ids), ...ids.map((id) => edge(id, 'Hub'))],
+    groups,
+  });
+  const bandOf = (r: CircularLayoutResult, id = 'G') => {
+    const g = r.groups!.find((q) => q.id === id)!;
+    if (g.kind !== 'band') throw new Error(`${id} is not a band`);
+    return g;
+  };
+
+  it('draws a group as a band when no box around it clears', () => {
+    const c = hubCase();
     const r = circularLayout(c.nodes, c.edges, {}, c.groups);
-    const b = r.groups![0] as GroupBand;
+    expect(r.hub).toBe('Hub');
+    expect(r.groups!.map((g) => g.kind)).toEqual(['band']);
+    expectClear(r, c);
+  });
+
+  it('follows the ring and leaves the hub, with no seat, outside', () => {
+    const c = hubCase();
+    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+    const b = bandOf(r);
     expect(b.center).toEqual({ x: 0, y: 0 });
     expect(b.innerRadius).toBeLessThan(r.radius);
     expect(b.outerRadius).toBeGreaterThan(r.radius);
     expect(b.endAngle).toBeGreaterThan(b.startAngle);
-    expectClear(r, c);
+    for (const id of ['Hub', 'E', 'F']) {
+      expect(covers(b, rectOf(r, c.nodes.find((n) => n.id === id)!, 4)), id).toBe(false);
+    }
   });
 
   it('seats the title outside the band, on the ray through its middle', () => {
-    const c = ring(8, 5);
+    const c = hubCase();
     const r = circularLayout(c.nodes, c.edges, {}, c.groups);
-    const b = r.groups![0] as GroupBand;
+    const b = bandOf(r);
     const mid = (b.startAngle + b.endAngle) / 2;
     expect(Math.atan2(b.title.y, b.title.x)).toBeCloseTo(Math.atan2(Math.sin(mid), Math.cos(mid)), 6);
     const { width, height } = c.groups[0]!.title!;
@@ -468,23 +502,78 @@ describe('bands', () => {
   });
 
   it('keeps the title room the top padding leaves, when no title size is given', () => {
-    const c = ring(6, 4);
-    const groups = [{ id: 'G', padding: tight }];
-    const r = circularLayout(c.nodes, c.edges, {}, groups);
-    const b = r.groups![0] as GroupBand;
+    const c = hubCase([{ id: 'G', padding: tight }]);
+    const b = bandOf(circularLayout(c.nodes, c.edges, {}, c.groups));
     expect(Math.hypot(b.title.x, b.title.y)).toBeGreaterThan(b.outerRadius);
   });
 
   it('mirrors a band counter-clockwise', () => {
-    const c = ring(8, 5);
-    const cw = circularLayout(c.nodes, c.edges, {}, c.groups).groups![0] as GroupBand;
-    const ccw = circularLayout(c.nodes, c.edges, { direction: 'counterclockwise' }, c.groups)
-      .groups![0] as GroupBand;
+    const c = hubCase();
+    const cw = bandOf(circularLayout(c.nodes, c.edges, {}, c.groups));
+    const ccw = bandOf(circularLayout(c.nodes, c.edges, { direction: 'counterclockwise' }, c.groups));
     const norm = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
     expect(norm(ccw.startAngle)).toBeCloseTo(norm(Math.PI - cw.endAngle), 6);
     expect(ccw.endAngle - ccw.startAngle).toBeCloseTo(cw.endAngle - cw.startAngle, 6);
     expect(ccw.title.x).toBeCloseTo(-cw.title.x, 6);
     expect(ccw.title.y).toBeCloseTo(cw.title.y, 6);
+  });
+
+  it('draws everything nested in a band as a band, its title in the strip between them', () => {
+    // Inner, B and C, would be a box on its own; its parent is a band.
+    const c = hubCase([group('G'), group('I', 'G')], ['B', 'C']);
+    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+    expect(r.groups!.map((g) => g.kind)).toEqual(['band', 'band']);
+    expectClear(r, c);
+    const outer = bandOf(r, 'G');
+    const inner = bandOf(r, 'I');
+    expect(inner.startAngle).toBeGreaterThanOrEqual(outer.startAngle);
+    expect(inner.endAngle).toBeLessThanOrEqual(outer.endAngle);
+    expect(inner.innerRadius).toBeGreaterThan(outer.innerRadius);
+    expect(inner.outerRadius).toBeLessThan(outer.outerRadius);
+    const { width, height } = c.groups[1]!.title!;
+    const title = {
+      minX: inner.title.x - width / 2,
+      minY: inner.title.y - height / 2,
+      maxX: inner.title.x + width / 2,
+      maxY: inner.title.y + height / 2,
+    };
+    expect(covers(inner, title)).toBe(false);
+    for (const corner of [
+      { x: title.minX, y: title.minY },
+      { x: title.maxX, y: title.minY },
+      { x: title.minX, y: title.maxY },
+      { x: title.maxX, y: title.maxY },
+    ]) {
+      expect(inBand(outer, corner)).toBe(true);
+    }
+  });
+});
+
+describe('a hub inside a band', () => {
+  it('leaves the band following the ring: the hub, with no seat, does not skew it', () => {
+    // Inner holds four of six and must be a band, since any box round
+    // it covers the hub. Outer holds Inner and the hub, so it is a band
+    // too. A band follows the ring, so the hub sets neither its angles
+    // nor its inner radius.
+    const ids = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const edges = [...cycle(...ids), ...ids.map((id) => edge(id, 'Hub'))];
+    const layout = (hubInOuter: boolean) => {
+      const nodes = [
+        ...ids.map((id) => node(id, 'Node', id <= 'D' ? 'Inner' : undefined)),
+        node('Hub', 'Hub', hubInOuter ? 'Outer' : undefined),
+      ];
+      return circularLayout(nodes, edges, {}, [group('Outer'), group('Inner', 'Outer')]);
+    };
+    const r = layout(true);
+    expect(r.hub).toBe('Hub');
+    const outer = r.groups!.find((g) => g.id === 'Outer') as GroupBand;
+    expect(outer.kind).toBe('band');
+    expect(outer.innerRadius).toBeGreaterThan(0);
+    // The same sweep as when the hub is not a member at all.
+    const without = layout(false).groups!.find((g) => g.id === 'Outer') as GroupBand;
+    expect(without.kind).toBe('band');
+    expect(outer.endAngle - outer.startAngle).toBeCloseTo(without.endAngle - without.startAngle, 6);
+    expect(outer.innerRadius).toBeCloseTo(without.innerRadius, 6);
   });
 });
 
@@ -506,47 +595,6 @@ describe('nesting', () => {
     };
     const r = circularLayout(c.nodes, c.edges, {}, c.groups);
     expect(r.groups!.map((g) => g.kind)).toEqual(['box', 'box']);
-    expectClear(r, c);
-  });
-
-  it('nests a band inside a band, its title in the strip between them', () => {
-    const c = gallery[2]!;
-    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
-    const outer = r.groups!.find((g) => g.id === 'Engineering') as GroupBand;
-    const inner = r.groups!.find((g) => g.id === 'CI') as GroupBand;
-    expect(inner.startAngle).toBeGreaterThanOrEqual(outer.startAngle);
-    expect(inner.endAngle).toBeLessThanOrEqual(outer.endAngle);
-    expect(inner.innerRadius).toBeGreaterThan(outer.innerRadius);
-    expect(inner.outerRadius).toBeLessThan(outer.outerRadius);
-    // The inner title sits outside the inner band, inside the outer.
-    const { width, height } = c.groups[1]!.title!;
-    const title = {
-      minX: inner.title.x - width / 2,
-      minY: inner.title.y - height / 2,
-      maxX: inner.title.x + width / 2,
-      maxY: inner.title.y + height / 2,
-    };
-    expect(covers(inner, title)).toBe(false);
-    for (const corner of [
-      { x: title.minX, y: title.minY },
-      { x: title.maxX, y: title.minY },
-      { x: title.minX, y: title.maxY },
-      { x: title.maxX, y: title.maxY },
-    ]) {
-      expect(inBand(outer, corner)).toBe(true);
-    }
-  });
-
-  it('draws everything nested in a band as a band', () => {
-    // Inner spans one step, a box on its own, but its parent is a band.
-    const ids = ['A', 'B', 'C', 'D', 'E', 'F'];
-    const c = {
-      nodes: ids.map((id, i) => node(id, 'Node', i === 0 || i === 5 ? undefined : i < 3 ? 'inner' : 'outer')),
-      edges: cycle(...ids),
-      groups: [group('outer'), group('inner', 'outer')],
-    };
-    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
-    expect(r.groups!.map((g) => g.kind)).toEqual(['band', 'band']);
     expectClear(r, c);
   });
 });
@@ -581,6 +629,85 @@ describe('box titles', () => {
     expectClear(r, c);
   });
 
+  it('puts the title room below rather than turning the ring, when the top would meet an outside node', () => {
+    // Four of five in Funded, with Pele's 35px title room: on top, it
+    // would meet Idea. Below, the ring keeps Idea on top, unturned.
+    const pele = { top: 35, right: 12, bottom: 12, left: 12 };
+    const nodes = [
+      node('I', 'Idea'),
+      ...(['Spec', 'Build', 'Test', 'Ship'] as const).map((l) => node(l[0]!, l, 'Funded')),
+    ];
+    const c = { nodes, edges: cycle('I', 'S', 'B', 'T', 'P'), groups: [{ id: 'Funded', padding: pele, title: { width: 54, height: 20 } }] };
+    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+    const idea = r.nodes.find((p) => p.id === 'I')!;
+    expect(idea.x).toBeCloseTo(0, 6);
+    expect(idea.y).toBeLessThan(0);
+    const g = boxOf(r, 'Funded');
+    expect(g.titleSide).toBe('bottom');
+    expect(g.title.y).toBeCloseTo(groupBounds(g).maxY - pele.top / 2, 6);
+    expectClear(r, c);
+  });
+
+  it('grows the ring before it puts a title below: titles go below only instead of a turn', () => {
+    // The water cycle as Pele measures it. Unturned, both tops meet
+    // Evaporation; a little growth clears them, so both titles stay on
+    // top and Evaporation stays on top.
+    const box = (id: string, width: number, group?: string): LayoutNodeInput => ({
+      id,
+      width,
+      height: 48,
+      ...(group !== undefined && { group }),
+    });
+    const nodes = [box('E', 121.38), box('C', 134.72, 'Atmosphere'), box('P', 124.04, 'Atmosphere'), box('R', 83.14, 'Land'), box('O', 106.24, 'Land')];
+    const pele = { top: 40, right: 12, bottom: 12, left: 12 };
+    const groups = [
+      { id: 'Land', padding: pele, title: { width: 35.58, height: 24 } },
+      { id: 'Atmosphere', padding: pele, title: { width: 86.24, height: 24 } },
+    ];
+    const c = { nodes, edges: cycle('E', 'C', 'P', 'R', 'O'), groups };
+    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+    expect(boxOf(r, 'Atmosphere').titleSide).toBe('top');
+    expect(boxOf(r, 'Land').titleSide).toBe('top');
+    const e = r.nodes.find((p) => p.id === 'E')!;
+    expect(e.x).toBeCloseTo(0, 6);
+    expect(e.y).toBeLessThan(0);
+    expectClear(r, c);
+  });
+
+  it('puts a title below at a turn that cannot clear upright, over a smaller turn that clears only by growing far', () => {
+    // A wheel as Pele measures it, Deliver holding Build, Test and Ship.
+    // No turn clears within 15% growth. The half-step beside Plan
+    // clears with its title on top only at about 1.19 times the radius.
+    // One seat back, Learn on top, the box cannot clear with its title
+    // on top, since its top meets the hub; with its title below it
+    // clears at far less growth, and wins.
+    const box = (id: string, width: number, group?: string): LayoutNodeInput => ({
+      id,
+      width,
+      height: 48,
+      ...(group !== undefined && { group }),
+    });
+    const nodes = [
+      box('A', 68.02),
+      box('B', 71.58, 'Deliver'),
+      box('C', 67.12, 'Deliver'),
+      box('D', 68.02, 'Deliver'),
+      box('E', 81.34),
+      box('F', 76.92),
+      box('Hub', 79.58),
+    ];
+    const edges = [...cycle('A', 'B', 'C', 'D', 'E', 'F'), ...['A', 'B', 'C', 'D', 'E', 'F'].map((id) => edge(id, 'Hub'))];
+    const groups = [{ id: 'Deliver', padding: { top: 40, right: 12, bottom: 12, left: 12 }, title: { width: 49.76, height: 24 } }];
+    const c = { nodes, edges, groups };
+    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+    const rim = r.nodes.filter((p) => p.id !== 'Hub');
+    const top = rim.reduce((a, b) => (b.y < a.y ? b : a));
+    expect(top.id).toBe('F');
+    expect(boxOf(r, 'Deliver').titleSide).toBe('bottom');
+    expect(r.radius / circularLayout(c.nodes, c.edges).radius).toBeLessThan(1.15 * 1.05);
+    expectClear(r, c);
+  });
+
   it('keeps titles on top when nothing crosses them', () => {
     const c = gallery[0]!;
     const r = circularLayout(c.nodes, c.edges, {}, c.groups);
@@ -604,27 +731,6 @@ describe('labels and titles', () => {
     const apart =
       Math.abs(label.x - box.title.x) >= (40 + width) / 2 || Math.abs(label.y - box.title.y) >= (20 + height) / 2;
     expect(apart).toBe(true);
-  });
-});
-
-describe('a hub inside a band', () => {
-  it('leaves the band following the ring: the hub, with no seat, does not skew it', () => {
-    const ids = ['A', 'B', 'C', 'D', 'E', 'F'];
-    const nodes = [
-      ...ids.map((id) => node(id, 'Node', id <= 'D' ? 'G' : undefined)),
-      node('Hub', 'Hub', 'G'),
-    ];
-    const edges = [...cycle(...ids), ...ids.map((id) => edge(id, 'Hub'))];
-    const r = circularLayout(nodes, edges, {}, [group('G')]);
-    expect(r.hub).toBe('Hub');
-    const band = r.groups![0] as GroupBand;
-    expect(band.kind).toBe('band');
-    // Four of six seats span three steps, half the ring, plus padding.
-    expect(band.endAngle - band.startAngle).toBeLessThan(Math.PI * 1.4);
-    expect(band.innerRadius).toBeGreaterThan(0);
-    for (const id of ['E', 'F']) {
-      expect(covers(band, rectOf(r, nodes.find((n) => n.id === id)!, 4)), id).toBe(false);
-    }
   });
 });
 
@@ -786,9 +892,11 @@ describe('straight edges with groups', () => {
       const straight = circularLayout(c.nodes, c.edges, options, c.groups);
       const arcs = circularLayout(c.nodes, c.edges, {}, c.groups);
       expect(straight.nodes).toEqual(arcs.nodes);
-      // The same shapes; only a box title's spot follows the routes.
-      const geometry = (r: CircularLayoutResult) => r.groups!.map(({ title: _t, ...rest }) => rest);
-      expect(geometry(straight)).toEqual(geometry(arcs));
+      // The same kinds of shape, titled on the same side. A box holds
+      // its members' paths, so it is a little smaller around straight
+      // lines than around arcs that sag past their nodes.
+      const kinds = (r: CircularLayoutResult) => r.groups!.map((g) => [g.kind, g.kind === 'box' && g.titleSide]);
+      expect(kinds(straight)).toEqual(kinds(arcs));
       expectClear(straight, c);
       for (const e of straight.edges.filter((q) => q.onRim)) {
         const [a, b] = [e.points[0]!, e.points[e.points.length - 1]!];

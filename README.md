@@ -144,10 +144,10 @@ Each group comes back as one of two shapes, told apart by `kind`:
 
 | `kind: 'box'` | `kind: 'band'` |
 | --- | --- |
-| <img src="docs/media/lifecycle-box.svg" width="291" alt="Eight boxes on a circle. Build and Test sit inside a gray box titled Make, at the bottom right."> | <img src="docs/media/lifecycle-band.svg" width="340" alt="The same eight boxes on a circle. A gray curved strip titled Funded wraps six of them, from Spec to Monitor."> |
+| <img src="docs/media/lifecycle-box.svg" width="291" alt="Eight boxes on a circle. Build and Test sit inside a gray box titled Make, at the bottom right."> | <img src="docs/media/hub-band.svg" width="300" alt="Six boxes on a circle around a hub, Registry, with an arrow from each to the hub. A gray curved strip titled Core runs along the right half under Alpha, Bravo, Charlie and Delta, and leaves the hub outside."> |
 
-A group becomes a band when it covers half the ring or more. A
-rectangle around that much of a circle would cover its middle.
+A group becomes a band only when no box around it clears at any turn,
+for example when a box would cover a hub that is not in the group.
 
 Every shape has a `title` point, the center of its title.
 `groupBounds(shape)` gives any shape's bounding box. `groupsClear` is
@@ -181,16 +181,19 @@ config:
   layout: circular
 ---
 flowchart LR
-  I[Idea]
-  subgraph Funded
-    S[Spec]
-    D[Design]
-    B[Build]
-    T[Test]
-    P[Deploy]
-    M[Monitor]
+  subgraph Core
+    A[Alpha]
+    B[Bravo]
+    C[Charlie]
+    D[Delta]
   end
-  I --> S --> D --> B --> T --> P --> M --> R[Retire] --> I
+  A --> B --> C --> D --> E[Echo] --> F[Foxtrot] --> A
+  A --> H[Registry]
+  B --> H
+  C --> H
+  D --> H
+  E --> H
+  F --> H
 ```
 
 </details>

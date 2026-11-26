@@ -103,45 +103,55 @@ members back in its place.
 
 When you pass the groups, the layout also places a shape for each one.
 It keeps the ring as it is: equal gaps, one radius, and symmetry. It
-never widens one gap to make room. Instead it makes room in three ways:
+never widens one gap to make room. Instead it makes room in four ways:
 
 1. Each box hugs its members, with the padding your renderer gave.
    It also holds the arrows between its members. An arc between two
    members can curve out past both of them, and the box holds it.
-2. The ring may turn. Any node, or the gap between two nodes, may take
+2. A box whose top would meet a node outside it may put its title
+   room at the bottom, instead of the ring turning further or growing
+   past 1.15 times. Each box is tried on its own, so one box can move
+   its title while its neighbor keeps its title on top.
+3. The ring may turn. Any node, or the gap between two nodes, may take
    the top. The ring stays symmetric either way. A group then often
    sits level, where a rectangle fits it snugly.
-3. The radius may grow, by the same amount for every gap, until each
+4. The radius may grow, by the same amount for every gap, until each
    shape is clear.
 
 Clear means 8 pixels of space between a shape and every node outside
 it, and between sibling shapes. That is enough for the wall and its
 neighbor to read as two separate things.
 
-The layout tries each turn and finds how much each one must grow. It
-picks the smallest turn that clears within 1.15 times the radius,
-breaking ties by least growth. 15% is about where a grown ring starts to look
-roomier than its spacing. If no turn clears that cheaply, it picks the
-turn that grows least within 1.5 times the radius. That cap keeps the
-diagram from swelling for one group. In the test diagrams used to choose
-this method, the most growth needed was 1.09 times.
+Every group starts as a box. The layout tries each turn with titles
+on top, growing it up to 1.15 times the radius. 15% is about where a
+grown ring starts to look roomier than its spacing. Among the turns
+that clear, it keeps those whose shapes cover at most 1.3 times the
+area of the tightest, so a box never sprawls over empty space to save
+a turn. Of those it picks the least turned, then the least grown.
+Then it tries again, with titles allowed at the bottom, each turn that
+did not clear with titles on top and is smaller than every turn that
+did. A smaller turn that clears that way wins, if its shapes are as
+tight. So a title goes below only at a turn that cannot clear with its
+title on top, never just to save that turn some growth. If no turn
+clears that cheaply, it grows each turn up to 1.5 times the radius,
+the same two ways. Now a turn with a title below may beat a smaller
+turn that clears with titles on top only by growing past 1.15 times.
+The 1.5 cap keeps the diagram from swelling for one group. The layout
+then keeps the turns within 5% of the least growth and ranks them the
+same way.
 
-A group whose members cover half the ring or more becomes a band: a
-curved strip that follows the ring. A rectangle around that much of a
-circle would cover its middle. Everything nested in a band is a band
-too. A group that holds every node on the ring stays a box, since
-nothing on the ring lies outside it. A box that clears at no turn is
-also redrawn as a band, together with the groups it sits in and the
-groups inside it. The layout tries this up to three times, and keeps
-the band only if it clashes less than the box did. A hub in the
-middle is never wrapped by a band.
+The shape follows from fit alone, not from how much of the ring a
+group covers. A box that clears at no turn and no growth is redrawn
+as a band: a curved strip that follows the ring. The groups it sits
+in, and the groups inside it, become bands too. The layout tries this
+up to three times, and keeps the band only if it clashes less than
+the box did. A hub in the middle is never wrapped by a band.
 
-A box's title goes at the top. Sometimes an edge across the ring, such
-as a spoke, chord or branch, crosses the strip where the title would
-go. If no edge crosses the bottom strip, the title moves there. Arcs
-don't count, since an arc always enters a box on the ring. Along its
-strip, the title takes the spot nearest the middle that no edge
-crosses.
+Sometimes an edge across the ring, such as a spoke, chord or branch,
+crosses the strip where a box's title would go. If no edge crosses
+the bottom strip, the title moves there. Arcs don't count, since an
+arc always enters a box on the ring. Along its strip, the title takes
+the spot nearest the middle that no edge crosses.
 
 A band's title reads level. It sits outside the band, 6 pixels beyond
 its outer edge, about half a line, on the line through the band's
@@ -149,9 +159,11 @@ middle. A band inside a band puts its title in the strip between the
 two.
 
 If no turn and no growth clears every shape, `groupsClear` is `false`.
-The shapes still come back. The search stops after 400 tries, so a
-32-node ring that cannot clear takes about 0.4 seconds instead of more
-than one.
+The shapes still come back. The layout tries every turn, so a 32-node
+ring that clears at once takes 64 tries. The search stops after 500
+tries, so a 32-node ring that cannot clear takes about 0.4 seconds
+instead of a second, and one whose group clears only as a band, round
+a hub, still has room to find it.
 
 ## Labels
 

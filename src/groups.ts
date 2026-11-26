@@ -3,21 +3,24 @@
  *
  * A designer keeps the regular polygon and moves the frame, not the
  * pieces. So the ring keeps its equal gaps, its one radius and its
- * mirror symmetry, and no gap is ever widened for a group. Three
+ * mirror symmetry, and no gap is ever widened for a group. Four
  * cheap moves make room instead:
  *
  * 1. Tight shapes. A box hugs its members, and the arcs between them,
  *    with the renderer's own padding: side room, and title room on top.
- * 2. Turn the ring. Any node may take the top, or the half-step
+ * 2. Title room below. A box whose top would meet an outside node may
+ *    carry its title room at the bottom, instead of a further turn.
+ * 3. Turn the ring. Any node may take the top, or the half-step
  *    between two nodes may, which is still mirror-symmetric. A group
  *    then sits balanced about an axis, where an axis-aligned box fits
  *    snugly: a two-node group becomes one flat side of the polygon.
- * 3. Grow the radius uniformly, only as far as clearance needs.
+ * 4. Grow the radius uniformly, only as far as clearance needs.
  *
- * A group whose members span half the ring or more is drawn as a
- * band that follows the ring, an annular sector, and so is everything
- * nested in it. A rectangle around that much of a circle covers the
- * middle, and no turn or growth changes that.
+ * Every group starts as a box. Among the turns that clear, the ones
+ * whose shapes are tight win, then the least turned. A group becomes a
+ * band that follows the ring only when no box around it clears at any
+ * turn. The shape is chosen by fit alone, never by how much of the ring
+ * a group covers.
  */
 import type { CircularLayoutResult, LayoutNodeInput, Point } from './layout.js';
 
@@ -53,11 +56,15 @@ export interface GroupBox {
   y: number;
   width: number;
   height: number;
-  /** Which edge holds the title room. The top, unless an edge cutting
-   *  across the ring (a spoke, chord or spur, not a rim arc) crosses the
-   *  top's title strip, the line the title runs along between the side
-   *  paddings, while no edge would cross the bottom's. Then the bottom,
-   *  and the top padding trades places with the bottom's. */
+  /** Which edge holds the title room. The top, with two exceptions,
+   *  where the top padding trades places with the bottom's:
+   *  - The box's top would meet an outside node at the least turn that
+   *    clears with titles on top, and with its title room at the
+   *    bottom a smaller turn clears.
+   *  - An edge cutting across the ring (a spoke, chord or spur, not a
+   *    rim arc) crosses the top's title strip, the line the title runs
+   *    along between the side paddings, while no edge would cross the
+   *    bottom's. */
   titleSide: 'top' | 'bottom';
   /** Center of the title: the middle of the title room's height, at
    *  the spot along it nearest the middle that no edge crosses, or the
@@ -141,16 +148,30 @@ const TITLE_GAP = 6;
  *  its neighbors' spacing. Within it, the least turn wins. */
 const CHEAP_GROWTH = 1.15;
 
+/** Among the turns that clear, how much more area than the tightest
+ *  turn's shapes still counts as tight: 30%. In the prototype gallery
+ *  a 30% margin kept the snug turns and dropped the boxes that sprawl
+ *  diagonally over empty space. */
+const AREA_SLACK = 1.3;
+
+/** When only grown turns clear, how far past the least grown radius
+ *  still counts as least grown: 5%, so a turn that is tighter or turns
+ *  less is not lost to a few pixels of growth. */
+const GROWTH_SLACK = 1.05;
+
 /** How many times a box that will not clear is redrawn as a band,
  *  with everything above and below it, before giving up. */
 const BAND_TRIES = 3;
 
 /** Solves one fitting may spend across every turn, growth round and
- *  band retry. A ring that clears takes a handful; one that cannot
- *  clear would otherwise try every turn at every growth, about 800
- *  solves for 32 nodes and a second or more. Past the budget the best
+ *  band retry. Every turn is tried, so a ring that clears at once
+ *  takes one solve a turn: 64 for 32 nodes, two turns a seat. A
+ *  32-node ring whose group only clears as a band, round a hub, takes
+ *  448, about half a second; 500 leaves it room. One that cannot clear
+ *  at all would try every turn at every growth, about 770 solves and a
+ *  second; the budget stops it at about 0.4s. Past the budget the best
  *  turn found so far stands, and the flag says whether it clears. */
-const SOLVE_BUDGET = 400;
+const SOLVE_BUDGET = 500;
 
 /** Growth rounds per turn, a guard: the cap ends the loop first. */
 const GROW_ROUNDS = 50;
@@ -251,6 +272,12 @@ export const groupBounds = (g: GroupShape): Bounds => {
   }
   return boundsOf(points);
 };
+
+/** The area a shape covers, px². Turns are ranked by it. */
+const areaOf = (g: GroupShape): number =>
+  g.kind === 'box'
+    ? g.width * g.height
+    : ((g.endAngle - g.startAngle) / 2) * (g.outerRadius ** 2 - g.innerRadius ** 2);
 
 const boundsOf = (points: Point[]): Bounds => ({
   minX: Math.min(...points.map((p) => p.x)),
@@ -374,6 +401,12 @@ const clash = (a: Region, b: Region, gap: number): number => {
   return depth;
 };
 
+/** A turn that clears, and how far it turns the ring, in seats. */
+interface Clear {
+  fitted: Fitted;
+  amount: number;
+}
+
 interface Fitted {
   result: CircularLayoutResult;
   shapes: Map<string, GroupShape>;
@@ -385,12 +418,14 @@ interface Fitted {
   clashing: Set<string>;
   /** Pixels added to every gap. */
   grow: number;
+  /** Boxes whose title room is at the bottom, to clear an outside node. */
+  bottom: Set<string>;
 }
 
 /**
  * Lay the graph out with every group's shape clear of the nodes
  * outside it and of its sibling shapes, keeping the ring's circle. See
- * the file's header for the three moves. `solve` lays the ring out
+ * the file's header for the four moves. `solve` lays the ring out
  * under a fit; without groups this never runs.
  */
 export const fitGroups = (
@@ -414,34 +449,14 @@ export const fitGroups = (
     spurParents: new Map(),
   });
 
-  // Which groups are bands: those whose members span half the ring
-  // or more, decided once, since a turn moves no seat relative to
-  // another.
+  // The unturned, ungrown ring: its seats and radius are what every
+  // turn and growth is measured against.
   const probeFit = fit(0, false, 0);
   const probe = solve(probeFit);
   const n = probe.order.length;
   const seatOf = seatsOf(probe, probeFit.spurParents);
+  // Every group starts as a box.
   let bands = new Set<string>();
-  for (const g of tree.ids) {
-    const seats = [
-      ...new Set(subtree.get(g)!.flatMap((m) => seatOf(m.id) ?? [])),
-    ].sort((a, b) => a - b);
-    if (seats.length < 2 || seats.length === n) {
-      // One seat is no arc. A group holding every seat has nothing on
-      // the ring outside it, so a box covers only its own middle.
-      continue;
-    }
-    let widestGap = n - seats[seats.length - 1]! + seats[0]!;
-    for (let i = 1; i < seats.length; i++) {
-      widestGap = Math.max(widestGap, seats[i]! - seats[i - 1]!);
-    }
-    // The steps from the first member's seat to the last's.
-    const span = n - widestGap;
-    if (2 * span >= n) {
-      bands.add(g);
-    }
-  }
-  bands = closed(bands, tree, children);
 
   const seatless = new Set(nodes.filter((m) => seatOf(m.id) === undefined).map((m) => m.id));
   const shapesOf = (result: CircularLayoutResult, bandSet: Set<string>, bottom?: Set<string>) =>
@@ -507,16 +522,47 @@ export const fitGroups = (
     return { residual, worst, clashing };
   };
 
+  /**
+   * The shapes for one solve. With `lower`, each clashing box has its
+   * title room moved to the bottom where that clashes less. Boxes are
+   * tried one at a time, in input order, so a box whose top is clear
+   * keeps its title on top.
+   */
+  const shapesFor = (result: CircularLayoutResult, bandSet: Set<string>, lower: boolean) => {
+    let bottom = new Set<string>();
+    let shapes = shapesOf(result, bandSet);
+    let clashes = clashesOf(result, shapes, bandSet);
+    for (const g of lower ? tree.ids : []) {
+      if (clashes.residual === 0) {
+        break;
+      }
+      if (!clashes.clashing.has(g)) {
+        continue;
+      }
+      const tried = new Set([...bottom, g]);
+      const low = shapesOf(result, bandSet, tried);
+      const lowClashes = clashesOf(result, low, bandSet);
+      if (lowClashes.residual < clashes.residual) {
+        bottom = tried;
+        shapes = low;
+        clashes = lowClashes;
+      }
+    }
+    return { shapes, bottom, ...clashes };
+  };
+
   const base = probe.radius;
   let solves = 0;
 
   /** One turn, grown uniformly until clear or until `limit` times the
-   *  unfitted radius, from `grow` pixels a gap. */
+   *  unfitted radius, from `grow` pixels a gap. With `lower`, boxes may
+   *  carry their title room at the bottom. */
   const grown = (
     turn: number,
     halfStep: boolean,
     bandSet: Set<string>,
     limit: number,
+    lower: boolean,
     from = 0
   ): Fitted => {
     const cap = limit * base;
@@ -525,10 +571,8 @@ export const fitGroups = (
     for (let round = 0; ; round++) {
       solves++;
       const result = solve(fit(turn, halfStep, grow));
-      const shapes = shapesOf(result, bandSet);
-      const { residual, worst, clashing } = clashesOf(result, shapes, bandSet);
-      const done = { result, shapes, residual, worst, clashing, grow };
-      if (residual === 0 || capped || round >= GROW_ROUNDS || solves >= SOLVE_BUDGET) {
+      const done = { result, grow, ...shapesFor(result, bandSet, lower) };
+      if (done.residual === 0 || capped || round >= GROW_ROUNDS || solves >= SOLVE_BUDGET) {
         return done;
       }
       if (result.radius > cap) {
@@ -543,7 +587,7 @@ export const fitGroups = (
       }
       // Most of the deepest clash, at least 4px a gap: the next solve
       // usually clears it without overshooting by much.
-      grow += Math.max(4, worst * 0.6);
+      grow += Math.max(4, done.worst * 0.6);
     }
   };
 
@@ -561,63 +605,109 @@ export const fitGroups = (
   // Least turned first, so a tie keeps the smaller turn.
   turns.sort((a, b) => turned(a.turn, a.halfStep) - turned(b.turn, b.halfStep));
 
+  const areaIn = (f: Fitted) => [...f.shapes.values()].reduce((sum, g) => sum + areaOf(g), 0);
+
   /**
-   * The turn, ranked rotation first. Among the turns that clear within
-   * CHEAP_GROWTH, the least turned wins, then the least grown. When
-   * none does, the least grown turn that clears within GROW_CAP wins,
-   * then the least turned. When none clears at all, the shallowest
-   * clash wins, so the flag goes up on the best there is. Turns are
-   * tried least turned first, so the first cheap clear ends the search
-   * once its equally turned twins are checked.
+   * The best of the turns that clear. When `grown` is set, only turns
+   * within GROWTH_SLACK of the least radius are kept first. Then the
+   * turns whose shapes cover at most AREA_SLACK times the least area,
+   * and of those the least turned, then the least grown.
+   */
+  const tightest = (clear: Clear[], grown: boolean): Clear => {
+    let pool = clear;
+    if (grown) {
+      const least = Math.min(...pool.map((c) => c.fitted.result.radius));
+      pool = pool.filter((c) => c.fitted.result.radius <= least * GROWTH_SLACK);
+    }
+    const least = Math.min(...pool.map((c) => areaIn(c.fitted)));
+    pool = pool.filter((c) => areaIn(c.fitted) <= least * AREA_SLACK);
+    pool.sort((a, b) => a.amount - b.amount || a.fitted.result.radius - b.fitted.result.radius);
+    return pool[0]!;
+  };
+
+  /**
+   * The turn. Every turn is first grown up to CHEAP_GROWTH with its
+   * titles on top. Then each turn that did not clear that way, and is
+   * smaller than every turn that did, is tried again with title room
+   * allowed at the bottom. So a title goes below only at a turn that
+   * cannot clear with titles on top, never to save that turn some
+   * growth. The tightest of the turns that clear either way wins. When
+   * none clears, the same two steps run again up to GROW_CAP: then a
+   * turn with a title below may beat a smaller turn that clears with
+   * titles on top only through growth past CHEAP_GROWTH. The tightest
+   * wins, the least grown first. When none clears at all, the
+   * shallowest clash with titles on top wins, so the flag goes up on
+   * the best there is and the band retry works from it. Past the solve
+   * budget, the turns already tried are ranked as they stand.
    */
   const search = (bandSet: Set<string>): Fitted => {
-    const cheap = new Map<string, Fitted>();
-    let best: { fitted: Fitted; rank: number[] } | undefined;
-    // Lexicographic: the first entry that differs decides.
-    const consider = (fitted: Fitted, rank: number[]) => {
-      const i = best ? rank.findIndex((v, k) => Math.abs(v - best!.rank[k]!) > 1e-9) : -1;
-      if (!best || (i >= 0 && rank[i]! < best.rank[i]!)) {
-        best = { fitted, rank };
+    // Each turn's latest result, titles on top and titles allowed
+    // below, kept apart: a lowered result counts only when it clears.
+    const upright = new Map<string, Fitted>();
+    const lowered = new Map<string, Fitted>();
+    const cheapGrow = new Map<string, number>();
+    const clear: Clear[] = [];
+    const pass = (limit: number) => {
+      for (const { turn, halfStep } of turns) {
+        const key = `${turn} ${halfStep}`;
+        const before = upright.get(key);
+        if (before?.residual === 0 || (solves >= SOLVE_BUDGET && upright.size > 0)) {
+          continue;
+        }
+        const fitted = grown(turn, halfStep, bandSet, limit, false, before?.grow ?? 0);
+        upright.set(key, fitted);
+        if (limit === CHEAP_GROWTH) {
+          cheapGrow.set(key, fitted.grow);
+        }
+        if (fitted.residual === 0) {
+          clear.push({ fitted, amount: turned(turn, halfStep) });
+        }
+      }
+      // Only turns that clear within CHEAP_GROWTH with titles on top
+      // bar a smaller turn's title from going below. In the cap pass
+      // there are none, so a title below may beat a turn that clears
+      // only through more growth.
+      const smallest = limit === CHEAP_GROWTH ? Math.min(...clear.map((c) => c.amount)) : Infinity;
+      for (const { turn, halfStep } of turns) {
+        const key = `${turn} ${halfStep}`;
+        const amount = turned(turn, halfStep);
+        const before = lowered.get(key);
+        if (
+          amount >= smallest - 1e-9 ||
+          upright.get(key)?.residual === 0 ||
+          before?.residual === 0 ||
+          solves >= SOLVE_BUDGET
+        ) {
+          continue;
+        }
+        // Grow this turn with titles below only if that clears at the
+        // growth the upright try reached. Checking costs no solve, and
+        // where titles below cannot help, as round a hub, it saves a
+        // whole pass of growing every turn.
+        const top = upright.get(key);
+        if (top && shapesFor(top.result, bandSet, true).residual > 0) {
+          continue;
+        }
+        // In the cap pass, a turn not yet grown with titles below
+        // starts where its upright try left the cheap pass, as a turn
+        // grown there with titles below would.
+        const from = before?.grow ?? (limit === GROW_CAP ? cheapGrow.get(key) : undefined) ?? 0;
+        const fitted = grown(turn, halfStep, bandSet, limit, true, from);
+        lowered.set(key, fitted);
+        if (fitted.residual === 0) {
+          clear.push({ fitted, amount });
+        }
       }
     };
-    for (const { turn, halfStep } of turns) {
-      const amount = turned(turn, halfStep);
-      if (best && amount > best.rank[0]! + 1e-9) {
-        return best.fitted;
-      }
-      if (solves >= SOLVE_BUDGET && cheap.size > 0) {
-        break;
-      }
-      const fitted = grown(turn, halfStep, bandSet, CHEAP_GROWTH);
-      cheap.set(`${turn} ${halfStep}`, fitted);
-      if (fitted.residual === 0) {
-        consider(fitted, [amount, fitted.result.radius / base]);
-      }
+    pass(CHEAP_GROWTH);
+    if (clear.length > 0) {
+      return tightest(clear, false).fitted;
     }
-    if (best) {
-      return best.fitted;
+    pass(GROW_CAP);
+    if (clear.length > 0) {
+      return tightest(clear, true).fitted;
     }
-    for (const { turn, halfStep } of turns) {
-      const first = cheap.get(`${turn} ${halfStep}`);
-      if (!first) {
-        continue;
-      }
-      if (solves >= SOLVE_BUDGET) {
-        // Out of budget: rank what pass 1 found for this turn as is.
-        // It did not clear, or the search would have ended there.
-        consider(first, [1, first.residual, turned(turn, halfStep)]);
-        continue;
-      }
-      const fitted = grown(turn, halfStep, bandSet, GROW_CAP, first.grow);
-      const amount = turned(turn, halfStep);
-      consider(
-        fitted,
-        fitted.residual === 0
-          ? [0, fitted.result.radius / base, amount]
-          : [1, fitted.residual, amount]
-      );
-    }
-    return best!.fitted;
+    return [...upright.values()].reduce((a, b) => (b.residual < a.residual ? b : a));
   };
 
   /**
@@ -670,11 +760,17 @@ export const fitGroups = (
       const strip = { minX: b.minX + pad.left, minY: top, maxX: b.maxX - pad.right, maxY: top + height };
       return among.some((line) => crosses(line, strip));
     };
-    let bottom = new Set<string>();
+    let bottom = fitted.bottom;
     let shapes = fitted.shapes;
     for (const g of tree.ids) {
       const shape = shapes.get(g);
-      if (!shape || shape.kind !== 'box' || tree.padding.get(g)!.top <= 0 || !stripCrossed(shape, g, cutting)) {
+      if (
+        !shape ||
+        shape.kind !== 'box' ||
+        shape.titleSide === 'bottom' ||
+        tree.padding.get(g)!.top <= 0 ||
+        !stripCrossed(shape, g, cutting)
+      ) {
         continue;
       }
       const tried = new Set([...bottom, g]);
@@ -699,10 +795,9 @@ export const fitGroups = (
   };
 
   let pick = search(bands);
-  // A box that clears at no turn becomes a band, as a group spanning
-  // half the ring does.
-  // A retry stands only if it clashes less, and none starts once the
-  // budget is spent.
+  // A box that clears at no turn becomes a band, with everything above
+  // and below it. A retry stands only if it clashes less, and none
+  // starts once the budget is spent.
   let pickBands = bands;
   for (let tries = 0; pick.residual > 0 && tries < BAND_TRIES && solves < SOLVE_BUDGET; tries++) {
     const more = closed(new Set([...bands, ...pick.clashing]), tree, children);
