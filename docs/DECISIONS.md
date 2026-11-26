@@ -229,15 +229,23 @@ before the move are recorded in its `docs/DECISIONS.md`.
   band only when no box clears. The rule "half the ring or more is a
   band" is gone: shape follows fit, not the share of the ring. The
   change: a clashing box may carry its title room at the bottom, but
-  only at a turn smaller than the best that clears with titles on top.
-  A title goes below instead of a turn, never instead of growth, so
-  the water cycle keeps its titles on top, as the owner chose. Boxes
-  are tried one at a time, in input order, and a move stands only if
-  it clashes less, so one of two boxes can move its title while the
-  other keeps it on top. In Pele this keeps Idea on top of "Funded"
-  instead of turning the ring upside down. A band is main's annular
-  sector, unchanged. Cut boxes (strategy C) were dropped. Tests that
-  pinned the old rule were rewritten: five of eight and four of six
-  are boxes now, the Krebs cycle turns to lay its two-node group flat,
-  and the band tests use a hub outside a four-of-six group. No layout
-  snapshot changed.
+  only at a turn smaller than the smallest that clears with titles on
+  top. A lowered try counts only when it clears; when nothing clears,
+  the shallowest clash with titles on top drives the band retry. A
+  title goes below instead of a turn, never instead of growth, so the
+  water cycle keeps its titles on top, as the owner chose. Boxes are
+  tried one at a time, in input order, and a move stands only if it
+  clashes less, so one of two boxes can move its title while the other
+  keeps it on top. In Pele this keeps Idea on top of "Funded" instead
+  of turning the ring upside down. A band is main's annular sector,
+  unchanged. Cut boxes (strategy C) were dropped. Tests that pinned
+  the old rule were rewritten: five of eight and four of six are boxes
+  now, the Krebs cycle turns to lay its two-node group flat, and the
+  band tests use a hub outside a four-of-six group. No layout snapshot
+  changed. Every turn is now tried, so a ring that clears at once
+  takes one solve a turn, 64 for 32 nodes. A turn is grown with titles
+  below only if that clears at the growth its upright try reached, a
+  check that costs no solve. The solve budget rose from 400 to 500, so
+  a 32-node ring whose group clears only as a band, round a hub, has
+  room to find it (448 solves, about half a second); one that cannot
+  clear stops at about 0.4s.

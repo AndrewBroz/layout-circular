@@ -155,9 +155,11 @@ middle. A band inside a band puts its title in the strip between the
 two.
 
 If no turn and no growth clears every shape, `groupsClear` is `false`.
-The shapes still come back. The search stops after 400 tries, so a
-32-node ring that cannot clear takes about 0.4 seconds instead of more
-than one.
+The shapes still come back. The layout tries every turn, so a 32-node
+ring that clears at once takes 64 tries. The search stops after 500
+tries, so a 32-node ring that cannot clear takes about 0.4 seconds
+instead of a second, and one whose group clears only as a band, round
+a hub, still has room to find it.
 
 ## Labels
 

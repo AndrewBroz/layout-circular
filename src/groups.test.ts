@@ -428,8 +428,11 @@ describe('shape by fit', () => {
 
   it('boxes a group whatever share of the ring it covers, when a box clears', () => {
     // Five of eight and four of six span half the ring: once bands.
-    expect(kindOf(ring(8, 5))).toBe('box');
-    expect(kindOf(ring(6, 4))).toBe('box');
+    for (const c of [ring(8, 5), ring(6, 4)]) {
+      const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+      expect(r.groups![0]!.kind).toBe('box');
+      expectClear(r, c);
+    }
   });
 
   it('boxes a group holding the whole ring: nothing on it lies outside', () => {
@@ -543,6 +546,34 @@ describe('bands', () => {
     ]) {
       expect(inBand(outer, corner)).toBe(true);
     }
+  });
+});
+
+describe('a hub inside a band', () => {
+  it('leaves the band following the ring: the hub, with no seat, does not skew it', () => {
+    // Inner holds four of six and must be a band, since any box round
+    // it covers the hub. Outer holds Inner and the hub, so it is a band
+    // too. A band follows the ring, so the hub sets neither its angles
+    // nor its inner radius.
+    const ids = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const edges = [...cycle(...ids), ...ids.map((id) => edge(id, 'Hub'))];
+    const layout = (hubInOuter: boolean) => {
+      const nodes = [
+        ...ids.map((id) => node(id, 'Node', id <= 'D' ? 'Inner' : undefined)),
+        node('Hub', 'Hub', hubInOuter ? 'Outer' : undefined),
+      ];
+      return circularLayout(nodes, edges, {}, [group('Outer'), group('Inner', 'Outer')]);
+    };
+    const r = layout(true);
+    expect(r.hub).toBe('Hub');
+    const outer = r.groups!.find((g) => g.id === 'Outer') as GroupBand;
+    expect(outer.kind).toBe('band');
+    expect(outer.innerRadius).toBeGreaterThan(0);
+    // The same sweep as when the hub is not a member at all.
+    const without = layout(false).groups!.find((g) => g.id === 'Outer') as GroupBand;
+    expect(without.kind).toBe('band');
+    expect(outer.endAngle - outer.startAngle).toBeCloseTo(without.endAngle - without.startAngle, 6);
+    expect(outer.innerRadius).toBeCloseTo(without.innerRadius, 6);
   });
 });
 
