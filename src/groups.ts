@@ -627,22 +627,25 @@ export const fitGroups = (
 
   /**
    * The turn. Every turn is first grown up to CHEAP_GROWTH with its
-   * titles on top. Then each turn smaller than the smallest that
-   * cleared is tried again with title room allowed at the bottom, so a
-   * title goes below instead of turning the ring further, never instead
-   * of growing it. The tightest of the turns that clear either way
-   * wins. When none clears, the same two steps run again up to
-   * GROW_CAP, and the tightest wins, the least grown first. When none
-   * clears at all, the shallowest clash with titles on top wins, so the
-   * flag goes up on the best there is and the band retry works from
-   * it. Past the solve budget, the turns already tried are ranked as
-   * they stand.
+   * titles on top. Then each turn that did not clear that way, and is
+   * smaller than every turn that did, is tried again with title room
+   * allowed at the bottom. So a title goes below only at a turn that
+   * cannot clear with titles on top, never to save that turn some
+   * growth. The tightest of the turns that clear either way wins. When
+   * none clears, the same two steps run again up to GROW_CAP: then a
+   * turn with a title below may beat a smaller turn that clears with
+   * titles on top only through growth past CHEAP_GROWTH. The tightest
+   * wins, the least grown first. When none clears at all, the
+   * shallowest clash with titles on top wins, so the flag goes up on
+   * the best there is and the band retry works from it. Past the solve
+   * budget, the turns already tried are ranked as they stand.
    */
   const search = (bandSet: Set<string>): Fitted => {
     // Each turn's latest result, titles on top and titles allowed
     // below, kept apart: a lowered result counts only when it clears.
     const upright = new Map<string, Fitted>();
     const lowered = new Map<string, Fitted>();
+    const cheapGrow = new Map<string, number>();
     const clear: Clear[] = [];
     const pass = (limit: number) => {
       for (const { turn, halfStep } of turns) {
@@ -653,16 +656,28 @@ export const fitGroups = (
         }
         const fitted = grown(turn, halfStep, bandSet, limit, false, before?.grow ?? 0);
         upright.set(key, fitted);
+        if (limit === CHEAP_GROWTH) {
+          cheapGrow.set(key, fitted.grow);
+        }
         if (fitted.residual === 0) {
           clear.push({ fitted, amount: turned(turn, halfStep) });
         }
       }
-      const smallest = Math.min(...clear.map((c) => c.amount));
+      // Only turns that clear within CHEAP_GROWTH with titles on top
+      // bar a smaller turn's title from going below. In the cap pass
+      // there are none, so a title below may beat a turn that clears
+      // only through more growth.
+      const smallest = limit === CHEAP_GROWTH ? Math.min(...clear.map((c) => c.amount)) : Infinity;
       for (const { turn, halfStep } of turns) {
         const key = `${turn} ${halfStep}`;
         const amount = turned(turn, halfStep);
         const before = lowered.get(key);
-        if (amount >= smallest - 1e-9 || before?.residual === 0 || solves >= SOLVE_BUDGET) {
+        if (
+          amount >= smallest - 1e-9 ||
+          upright.get(key)?.residual === 0 ||
+          before?.residual === 0 ||
+          solves >= SOLVE_BUDGET
+        ) {
           continue;
         }
         // Grow this turn with titles below only if that clears at the
@@ -673,7 +688,11 @@ export const fitGroups = (
         if (top && shapesFor(top.result, bandSet, true).residual > 0) {
           continue;
         }
-        const fitted = grown(turn, halfStep, bandSet, limit, true, before?.grow ?? 0);
+        // In the cap pass, a turn not yet grown with titles below
+        // starts where its upright try left the cheap pass, as a turn
+        // grown there with titles below would.
+        const from = before?.grow ?? (limit === GROW_CAP ? cheapGrow.get(key) : undefined) ?? 0;
+        const fitted = grown(turn, halfStep, bandSet, limit, true, from);
         lowered.set(key, fitted);
         if (fitted.residual === 0) {
           clear.push({ fitted, amount });

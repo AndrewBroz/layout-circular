@@ -674,6 +674,40 @@ describe('box titles', () => {
     expectClear(r, c);
   });
 
+  it('puts a title below at a turn that cannot clear upright, over a smaller turn that clears only by growing far', () => {
+    // A wheel as Pele measures it, Deliver holding Build, Test and Ship.
+    // No turn clears within 15% growth. The half-step beside Plan
+    // clears with its title on top only at about 1.19 times the radius.
+    // One seat back, Learn on top, the box cannot clear with its title
+    // on top, since its top meets the hub; with its title below it
+    // clears at far less growth, and wins.
+    const box = (id: string, width: number, group?: string): LayoutNodeInput => ({
+      id,
+      width,
+      height: 48,
+      ...(group !== undefined && { group }),
+    });
+    const nodes = [
+      box('A', 68.02),
+      box('B', 71.58, 'Deliver'),
+      box('C', 67.12, 'Deliver'),
+      box('D', 68.02, 'Deliver'),
+      box('E', 81.34),
+      box('F', 76.92),
+      box('Hub', 79.58),
+    ];
+    const edges = [...cycle('A', 'B', 'C', 'D', 'E', 'F'), ...['A', 'B', 'C', 'D', 'E', 'F'].map((id) => edge(id, 'Hub'))];
+    const groups = [{ id: 'Deliver', padding: { top: 40, right: 12, bottom: 12, left: 12 }, title: { width: 49.76, height: 24 } }];
+    const c = { nodes, edges, groups };
+    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+    const rim = r.nodes.filter((p) => p.id !== 'Hub');
+    const top = rim.reduce((a, b) => (b.y < a.y ? b : a));
+    expect(top.id).toBe('F');
+    expect(boxOf(r, 'Deliver').titleSide).toBe('bottom');
+    expect(r.radius / circularLayout(c.nodes, c.edges).radius).toBeLessThan(1.15 * 1.05);
+    expectClear(r, c);
+  });
+
   it('keeps titles on top when nothing crosses them', () => {
     const c = gallery[0]!;
     const r = circularLayout(c.nodes, c.edges, {}, c.groups);
