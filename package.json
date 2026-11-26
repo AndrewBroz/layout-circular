@@ -1,6 +1,6 @@
 {
   "name": "layout-circular",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Circular graph layout math. Places nodes on a circle and routes edges along it. It draws nothing and has no dependencies.",
   "type": "module",
   "module": "dist/layout-circular.js",
