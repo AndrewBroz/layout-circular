@@ -237,8 +237,11 @@ before the move are recorded in its `docs/DECISIONS.md`.
   this keeps Idea on top of "Funded" instead of turning the ring
   upside down. A band is no longer an annular sector. Its wall is
   traced ray by ray, keeps one padding from its members and the paths
-  between them, bends along a curve of radius 1500px between them, and
-  eases onto the end members, so it has no horns. `GroupBand` gained
+  between them, and bends along a curve of radius 1500px between them.
+  Round its two end members the padding is exact, so each end is the
+  member's padded outline; the wall carries the end member's side on,
+  eases onto the curve, and a light smoothing rounds the creases. So it
+  has no horns and no kink at its ends. `GroupBand` gained
   `outline`, and `outlinePath` turns it into an SVG path; the radii and
   angles stay, as the slice the outline lies in. Cut boxes (strategy
   C) were dropped. Tests that pinned the old rule were rewritten:

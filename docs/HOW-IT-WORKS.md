@@ -144,10 +144,13 @@ up to three times, and keeps the band only if it clashes less than
 the box did. A hub in the middle is never wrapped by a band.
 
 A band keeps one padding, the largest of the side and bottom
-paddings, from its members and the arrows between them. Between the
-end members, each wall bends gently, along a curve of radius 1500
-pixels, so it reads as an arc near the ring's own rather than pinching
-between nodes. Past the end members, the wall rounds onto them.
+paddings, from its members and the arrows between them. Round its two
+end members the padding is exact, so each end is the member's own
+padded outline, rounded at the corners. Between them, each wall bends
+gently, along a curve of radius 1500 pixels, so it reads as an arc
+near the ring's own rather than pinching between nodes. The wall
+carries the end member's side on and eases onto that curve, and a
+light smoothing rounds the creases.
 
 Sometimes an edge across the ring, such as a spoke, chord or branch,
 crosses the strip where a box's title would go. If no edge crosses
@@ -187,8 +190,9 @@ Edge labels also slide off group titles, as they do off boxes.
 
 ## Limits
 
-- A band's padding is exact at its tightest member only. On a small
-  ring the gently bent walls stand further off the end members.
+- A band's padding is exact round its end members and at its tightest
+  members between. On a small ring the gently bent walls stand further
+  off the members in the middle, and the outer wall can bulge.
 - The title of a band inside a band is checked against nodes and
   sibling shapes, but not against other titles.
 - A chord across a ring with a hub runs straight through the hub. Its

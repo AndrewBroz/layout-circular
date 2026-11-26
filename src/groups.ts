@@ -1030,12 +1030,14 @@ const rayHitsDisc = (ux: number, uy: number, c: Point, p: number): [number, numb
  * A band that follows the ring and keeps one padding, the largest of
  * the side and bottom paddings, from everything it holds: its members,
  * the paths between them, its child bands and their titles. Its walls
- * are traced ray by ray from the center. Between the end members each
- * wall hangs on a curve of radius BEND drawn over everything it holds,
- * so it bends gently instead of pinching between nodes. Past each end
- * member's middle the wall eases from that curve onto the member's
- * padding, so the end is round, with no horn. Undefined when the group
- * has nothing on the ring.
+ * are traced ray by ray from the center. Round each end member the
+ * wall keeps exactly the padding, so the end is the member's padded
+ * outline, round at its corners, with no horn. From the members next
+ * to them inward, each wall hangs on a curve of radius BEND drawn over
+ * everything it holds, so it bends gently instead of pinching between
+ * nodes. Between, it carries the end member's side on and eases onto
+ * the curve. A light smoothing then rounds the creases, never inside
+ * the padding. Undefined when the group has nothing on the ring.
  */
 const bandOf = (
   g: string,
@@ -1067,25 +1069,14 @@ const bandOf = (
   const middle = wrap(gapAt + widest / 2 + Math.PI);
   const rel = (q: Point) => wrap(Math.atan2(q.y, q.x) - middle);
 
-  // What the band holds: rects and points, each padded by p. The end
-  // members' middles bound the hung part of the walls.
+  // What the band holds: rects and points, each padded by p.
   const rects: Bounds[] = [...own];
   const points: Point[] = [];
-  let c0 = Infinity;
-  let c1 = -Infinity;
-  for (const n of members) {
-    c0 = Math.min(c0, rel(at.get(n.id)!));
-    c1 = Math.max(c1, rel(at.get(n.id)!));
-  }
   for (const k of kids) {
     if (k.kind !== 'band') {
       continue;
     }
-    for (const q of k.outline) {
-      points.push(q);
-      c0 = Math.min(c0, rel(q));
-      c1 = Math.max(c1, rel(q));
-    }
+    points.push(...k.outline);
     rects.push(titleBounds(k, tree.title.get(k.id)!));
   }
   const inside = new Set(members.map((n) => n.id));
@@ -1120,51 +1111,133 @@ const bandOf = (
     hugOut.push(hi);
   }
 
-  // Each wall at each ray: the hung curve over every padded point
-  // between the end members' middles, never inside the padding. The
-  // curve sags a·(k − j)² from the point on ray j at ray k.
-  const k0 = Math.ceil(((c0 + Math.PI) / TAU) * BAND_STEPS);
-  const k1 = Math.floor(((c1 + Math.PI) / TAU) * BAND_STEPS);
-  const a = (ring * (TAU / BAND_STEPS)) ** 2 / (2 * BEND);
-  const hung: number[] = [];
-  for (let j = k0; j <= k1; j++) {
-    if (Number.isFinite(hugOut[j]!)) {
-      hung.push(j);
-    }
-  }
-  const outEnvelope = lowestParabolas(hung, (j) => -hugOut[j]! / a, BAND_STEPS);
-  const inEnvelope = lowestParabolas(hung, (j) => hugIn[j]! / a, BAND_STEPS);
-  const inR: number[] = [];
-  const outR: number[] = [];
-  for (let k = 0; k < BAND_STEPS; k++) {
-    const hungOut = -a * outEnvelope[k]!;
-    const hungIn = a * inEnvelope[k]!;
-    if (k >= k0 && k <= k1) {
-      outR.push(Math.max(hugOut[k]!, hungOut));
-      inR.push(Math.min(hugIn[k]!, hungIn));
-    } else if (Number.isFinite(hugOut[k]!)) {
-      // Past an end member's middle: a half-cosine from the hung curve
-      // at the middle down to the padding at the end.
-      const dir = k < k0 ? -1 : 1;
-      let end = k;
-      while (Number.isFinite(hugOut[end + dir] ?? NaN)) {
-        end += dir;
+  // Each wall has three parts. Round each end member, from its far
+  // side to its corner nearest the band's middle, the wall keeps
+  // exactly the padding. From the members next to them inward, it
+  // hangs on the gentle curve. In between, it eases from the end
+  // member's side onto the curve.
+  const ray = (angle: number) => ((angle + Math.PI) / TAU) * BAND_STEPS;
+  const rayOf = (n: LayoutNodeInput) => ray(rel(at.get(n.id)!));
+  const byAngle = [...members].sort((m, q) => rayOf(m) - rayOf(q));
+  const firstMember = byAngle[0]!;
+  const lastMember = byAngle[byAngle.length - 1]!;
+  const cornerRays = (n: LayoutNodeInput): number[] => {
+    const c = at.get(n.id)!;
+    return [-1, 1].flatMap((sx) => [-1, 1].map((sy) => ray(rel({ x: c.x + (sx * n.width) / 2, y: c.y + (sy * n.height) / 2 }))));
+  };
+  /** Where a wall leaves an end member: the ray, between the member's
+   *  middle and a little past its corner nearest the band's middle, on
+   *  which its padding reaches farthest from the center (outer wall)
+   *  or nearest to it (inner wall). That is the crown of the padded
+   *  corner, so the wall leaves it level. The corner is the nearer of
+   *  the member's two corners farther from the center for the outer
+   *  wall, of the two nearer for the inner wall. */
+  const CROWN_RAYS = 6; // three degrees past the corner: its rounding, p wide
+  const leaveRay = (hug: number[], n: LayoutNodeInput, outward: boolean, isLast: boolean): number => {
+    const c = at.get(n.id)!;
+    const corners = [-1, 1]
+      .flatMap((sx) => [-1, 1].map((sy) => ({ x: c.x + (sx * n.width) / 2, y: c.y + (sy * n.height) / 2 })))
+      .sort((p, q) => Math.hypot(q.x, q.y) - Math.hypot(p.x, p.y));
+    const rays = (outward ? corners.slice(0, 2) : corners.slice(2)).map((q) => ray(rel(q)));
+    const corner = isLast ? Math.floor(Math.min(...rays)) - CROWN_RAYS : Math.ceil(Math.max(...rays)) + CROWN_RAYS;
+    const middleRay = Math.round(rayOf(n));
+    let best = middleRay;
+    for (let j = Math.min(middleRay, corner); j <= Math.max(middleRay, corner); j++) {
+      const v = hug[j];
+      if (v !== undefined && Number.isFinite(v) && (outward ? v > hug[best]! : v < hug[best]!)) {
+        best = j;
       }
-      const from = k < k0 ? k0 : k1;
-      const t = Math.min(1, Math.abs(k - from) / Math.max(1, Math.abs(end - from)));
-      const w = Number.isFinite(hungOut) ? (1 + Math.cos(Math.PI * t)) / 2 : 0;
-      outR.push(Math.max(hugOut[k]!, hugOut[k]! + (hungOut - hugOut[k]!) * w));
-      inR.push(Math.min(hugIn[k]!, hugIn[k]! + (hungIn - hugIn[k]!) * w));
-    } else {
-      outR.push(NaN);
-      inR.push(NaN);
     }
-  }
-  let first = k0;
+    return best;
+  };
+  // The curve sags a·(k − j)² from the padded point on ray j at ray k.
+  const a = (ring * (TAU / BAND_STEPS)) ** 2 / (2 * BEND);
+  /** The end member's padded side carried on past its corner, at the
+   *  rate the wall moved away from the band over the last few rays
+   *  before the corner. `dir` points away from the band's middle. */
+  const SIDE_RAYS = 3; // a degree and a half: clear of the corner's rounding
+  const alongSide = (wall: number[], from: number, dir: number, k: number, outward: boolean): number => {
+    const back = wall[from + dir * SIDE_RAYS];
+    const rate = back === undefined || !Number.isFinite(back) ? 0 : (wall[from]! - back) / SIDE_RAYS;
+    return wall[from]! + (outward ? Math.max(0, rate) : Math.min(0, rate)) * Math.abs(k - from);
+  };
+  // The rounding of a wall's creases: 20 passes of a 7-ray (3.5
+  // degree) average act like a blur about 9 rays wide, enough to round
+  // a crease without flattening the gentle curve.
+  const SMOOTH_RAYS = 3;
+  const SMOOTH_PASSES = 60;
+  /** One wall, from the padded points on each ray: the farthest for
+   *  the outer wall, the nearest for the inner. */
+  const wallOf = (hug: number[], outward: boolean): number[] => {
+    const sign = outward ? 1 : -1;
+    let kA = leaveRay(hug, firstMember, outward, false);
+    let kB = leaveRay(hug, lastMember, outward, true);
+    if (kA >= kB) {
+      // The end members meet: nothing between them to hang a curve on.
+      kA = kB = Math.round(rayOf(firstMember));
+    }
+    const half = (kA + kB) / 2;
+    // The curve takes over where the next member's corners begin, so
+    // the wall passes every inner member on the curve alone.
+    const n0 = byAngle.length > 2 ? Math.min(half, Math.max(kA, Math.min(...cornerRays(byAngle[1]!)))) : half;
+    const n1 = byAngle.length > 2 ? Math.max(half, Math.min(kB, Math.max(...cornerRays(byAngle[byAngle.length - 2]!)))) : half;
+    const hung: number[] = [];
+    for (let j = kA; j <= kB; j++) {
+      if (Number.isFinite(hug[j]!)) {
+        hung.push(j);
+      }
+    }
+    const envelope = lowestParabolas(hung, (j) => (-sign * hug[j]!) / a, BAND_STEPS);
+    const wall: number[] = [];
+    for (let k = 0; k < BAND_STEPS; k++) {
+      if (!Number.isFinite(hug[k]!) || k <= kA || k >= kB) {
+        wall.push(Number.isFinite(hug[k]!) ? hug[k]! : NaN);
+        continue;
+      }
+      // How much of the curve the wall takes: none at the end member's
+      // corner, all from the next member's middle on, a half-cosine
+      // between.
+      let w = 1;
+      let from = kA;
+      let dir = -1;
+      if (k < n0) {
+        w = (1 - Math.cos((Math.PI * (k - kA)) / (n0 - kA))) / 2;
+      } else if (k > n1) {
+        w = (1 - Math.cos((Math.PI * (kB - k)) / (kB - n1))) / 2;
+        from = kB;
+        dir = 1;
+      }
+      const curve = -sign * a * envelope[k]!;
+      // The side, carried on, stops where it reaches the curve.
+      const carried = w < 1 ? alongSide(hug, from, dir, k, outward) : curve;
+      const side = outward ? Math.min(carried, Math.max(curve, hug[from]!)) : Math.max(carried, Math.min(curve, hug[from]!));
+      const v = side + (curve - side) * w;
+      wall.push(outward ? Math.max(hug[k]!, v) : Math.min(hug[k]!, v));
+    }
+    // Round the creases: where the eased part meets the end member's
+    // side and the curve, and where two members' curves meet. Each
+    // ray between the end members is averaged with its neighbors,
+    // never inside the padding. The end members' own rays stay put.
+    for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
+      const before = wall.slice();
+      for (let k = kA + 1; k < kB; k++) {
+        let sum = 0;
+        for (let d = -SMOOTH_RAYS; d <= SMOOTH_RAYS; d++) {
+          sum += before[k + d]!;
+        }
+        const mean = sum / (2 * SMOOTH_RAYS + 1);
+        wall[k] = outward ? Math.max(hug[k]!, mean) : Math.min(hug[k]!, mean);
+      }
+    }
+    return wall;
+  };
+  const outR = wallOf(hugOut, true);
+  const inR = wallOf(hugIn, false);
+  let first = Math.round(rayOf(firstMember));
   while (first > 0 && Number.isFinite(outR[first - 1]!)) {
     first--;
   }
-  let last = k1;
+  let last = Math.round(rayOf(lastMember));
   while (last < BAND_STEPS - 1 && Number.isFinite(outR[last + 1]!)) {
     last++;
   }

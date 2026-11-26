@@ -514,6 +514,33 @@ describe('bands', () => {
     }
   });
 
+  it('rounds each end member with exactly the padding', () => {
+    const c = hubCase();
+    const r = circularLayout(c.nodes, c.edges, {}, c.groups);
+    const b = bandOf(r);
+    const pad = Math.max(tight.left, tight.right, tight.bottom);
+    const mid = (b.startAngle + b.endAngle) / 2;
+    const off = (p: Point) => Math.abs(Math.atan2(Math.sin(Math.atan2(p.y, p.x) - mid), Math.cos(Math.atan2(p.y, p.x) - mid)));
+    // A and D are the end members. Their two corners farthest round
+    // from the band's middle, and their two corners farthest from the
+    // center, under the outer wall, all sit one padding inside the
+    // wall, within the 1px the traced wall may stray.
+    for (const id of ['A', 'D']) {
+      const m = rectOf(r, c.nodes.find((n) => n.id === id)!);
+      const corners = [
+        { x: m.minX, y: m.minY },
+        { x: m.maxX, y: m.minY },
+        { x: m.minX, y: m.maxY },
+        { x: m.maxX, y: m.maxY },
+      ];
+      const roundEnd = [...corners].sort((p, q) => off(q) - off(p)).slice(0, 2);
+      const outer = [...corners].sort((p, q) => Math.hypot(q.x, q.y) - Math.hypot(p.x, p.y)).slice(0, 2);
+      for (const q of [...roundEnd, ...outer]) {
+        expect(Math.abs(toWall(b, q) - pad), id).toBeLessThan(1);
+      }
+    }
+  });
+
   it('follows the ring and leaves the hub, with no seat, outside', () => {
     const c = hubCase();
     const r = circularLayout(c.nodes, c.edges, {}, c.groups);
